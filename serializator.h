@@ -208,8 +208,8 @@ td::BufferSlice serialize(td::Ref<vm::Cell> root) {
             if (d2_i != d2_j) {
                 return d2_i < d2_j;
             }
-
-            return i < j;
+            
+            return std::make_pair(my_cells[i]->data, i) < std::make_pair(my_cells[j]->data, j);
         };
 
         uint8_t bytes = 1;
