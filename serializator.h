@@ -16,6 +16,15 @@ struct MyCell {
     std::basic_string<uint8_t> data{};
     unsigned cnt_bits{-1u};
 
+    CellType get_type() const {
+        if (!is_special) {
+            return CellType::Ordinary;
+        }
+        const auto type = static_cast<CellType>(data.at(0));
+        CHECK(type != CellType::Ordinary);
+        return type;
+    }
+
     MyCell() {
     }
 
@@ -51,6 +60,11 @@ struct MyCell {
         for (unsigned i = 0; i < cnt_refs; i++) {
             td::Ref<vm::Cell> ref = cell_loaded.data_cell->get_ref(i);
             refs_as_cells[i] = ref;
+        }
+
+        if (get_type() == CellType::MerkleUpdate) {
+            data.resize(1);
+            cnt_bits = 8;
         }
     }
 
@@ -227,7 +241,7 @@ td::BufferSlice serialize(td::Ref<vm::Cell> root) {
         }
     }
 
-    std::basic_string<uint8_t> data;
+    std::basic_string<uint8_t> bytes;
 
     // the number of bytes needed to store a cell index and its references
     uint8_t bytes_for_index = 1;
@@ -238,27 +252,27 @@ td::BufferSlice serialize(td::Ref<vm::Cell> root) {
             ++bytes_for_index;
         }
 
-        data.push_back(my_cell->d1());
+        bytes.push_back(my_cell->d1());
 
-        data.push_back(my_cell->d2());
+        bytes.push_back(my_cell->d2());
         for (unsigned it = 0; it < my_cell->cnt_bits / 8; ++it) {
-            data.push_back(my_cell->data[it]);
+            bytes.push_back(my_cell->data[it]);
         }
         if (my_cell->cnt_bits % 8 != 0) {
             uint8_t pos = 7 - (my_cell->cnt_bits % 8);
             uint8_t last_byte = my_cell->data.at((my_cell->cnt_bits + 7) / 8 - 1);
             last_byte ^= (1u << pos);
-            data.push_back(last_byte);
+            bytes.push_back(last_byte);
         }
 
         // up to 4 refs
         for (unsigned it = 0; it < my_cell->cnt_refs; ++it) {
             // big endian
-            push_as_bytes(data, my_cell->refs[it], bytes_for_index);
+            push_as_bytes(bytes, my_cell->refs[it], bytes_for_index);
         }
     }
 
-    return td::BufferSlice(reinterpret_cast<const char *>(data.data()), data.size());
+    return td::BufferSlice(reinterpret_cast<const char *>(bytes.data()), bytes.size());
 }
 
 td::Ref<vm::Cell> deserialise(td::Slice buffer_slice) {
@@ -329,6 +343,7 @@ td::Ref<vm::Cell> deserialise(td::Slice buffer_slice) {
     const auto n = my_cells.size();
     CHECK(!my_cells.empty());
 
+    // top sort
     std::vector<unsigned> order; {
         std::vector<char> was(n, false);
         auto dfs = [&](auto &&self, unsigned i) -> void {
@@ -351,18 +366,14 @@ td::Ref<vm::Cell> deserialise(td::Slice buffer_slice) {
         }
     }
 
+    uint8_t bytes_for_index_max = len_in_bytes(my_cells.size());
+
     // build DAG of td::Ref<vm::Cell>
     std::vector<td::Ref<vm::Cell> > cells(n);
     for (unsigned i : order) {
         const auto &my_cell = my_cells.at(i);
 
         vm::CellBuilder cell_builder;
-
-        // add data
-        cell_builder.store_bits(
-            my_cell->data.data(),
-            my_cell->cnt_bits
-        );
 
         // add refs
         std::vector<td::Ref<vm::Cell> > refs;
@@ -373,6 +384,37 @@ td::Ref<vm::Cell> deserialise(td::Slice buffer_slice) {
             cell_builder.store_ref(cells[ref_id]);
             refs.push_back(cells[ref_id]);
         }
+
+        const auto cell_type = my_cell->get_type();
+        std::basic_string<uint8_t> data = my_cell->data;;
+        unsigned cnt_bits = my_cell->cnt_bits;
+        if (cell_type == CellType::MerkleUpdate) {
+            // hash0 (256), hash1, depth0 (8 * bytes_for_index), depth1
+            CHECK(refs.size() == 2);
+            CHECK(data.size() == 1);
+
+            for (unsigned j = 0; j < 2; ++j) {
+                const auto hash = refs[j]->get_hash(0);
+                const auto slice = hash.as_slice();
+                auto calc_hash = std::basic_string<uint8_t>(slice.data(), slice.data() + (256/8));
+                // std::cout << "calc   first byte: " << std::bitset<8>(calc_hash[0]) << std::endl;
+                // std::cout << "stored first byte: " << std::bitset<8>(data[1]) << std::endl;
+                // CHECK(calc_hash == data.substr(1, 256/8));
+                data += calc_hash;
+            }
+
+            for (unsigned j = 0; j < 2; ++j) {
+                unsigned depth = refs[j]->get_depth(0);
+                push_as_bytes(data, depth, bytes_for_index_max);
+            }
+            cnt_bits = data.size() * 8;
+        }
+
+        // add data
+        cell_builder.store_bits(
+            data.data(),
+            cnt_bits
+        );
 
         td::Ref<vm::DataCell> cell{};
         auto finalised = cell_builder.finalize_novm_nothrow(my_cell->is_special);
@@ -393,14 +435,6 @@ std::string compress(const std::string &base64_data) {
     td::BufferSlice serialized_my = serialize(root);
     // std::cout << "my serialised, number of bytes =  " << serialized.size() << std::endl;
     td::BufferSlice serialized_their = vm::std_boc_serialize(root, 0).move_as_ok();
-
-    // for (int i = 0; i < 33/*serialized_their.size()*/; ++i) {
-    //     std::cout << "bytes: " << std::bitset<8>(serialized_their[i]) << " " << std::bitset<8>(serialized_my[i]) << std::endl;
-    //     if (serialized_my[i] != serialized_their[i]) {
-    //         std::cout << "mismatch at i=" << i << std::endl;
-    //     }
-    // }
-    // exit(0);
 
     auto serialized = std::move(serialized_my);
 

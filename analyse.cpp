@@ -58,13 +58,15 @@ void dfs(const td::Ref<vm::Cell>& cell) {
         long from_depth = cell_slice.fetch_long(16);
         long to_depth = cell_slice.fetch_long(16);
 
+        td::Ref<vm::Cell> ref = cell_loaded.data_cell->get_ref(0);
+
         std::cout << "from_depth = " << from_depth << std::endl;
         std::cout << "to_depth = " << to_depth << std::endl;
         std::cout << "cnt refs = " << cell_loaded.data_cell->get_refs_cnt() << std::endl;
         std::cout << "depth of \"merkle update\" cell calculated by me = " << depth[cell.get()] << std::endl;
+        std::cout << "depth of the first ref = " << ref->get_depth(0) << std::endl;
         std::cout << "level of the \"merkle update\" cell = " << cell_loaded.data_cell->get_level() << std::endl;
 
-        td::Ref<vm::Cell> ref = cell_loaded.data_cell->get_ref(0);
         vm::CellSlice ref_slice = cell_to_slice(ref);
         long constructor_id = ref_slice.fetch_long(32);
         std::cout << "first 4 bytes in the first referenced cell = 0x" << std::hex << constructor_id << std::endl;
