@@ -1,0 +1,94 @@
+#pragma once
+
+#include <fstream>
+
+#include "vm/cells/CellSlice.h"
+#include "td/utils/lz4.h"
+#include "td/utils/base64.h"
+#include "vm/boc.h"
+#include "vm/excno.hpp"
+#include "block/block-auto.h"
+
+using CellType = vm::CellTraits::SpecialType;
+
+td::uint8 cell_type_to_int(const CellType &type) {
+    return static_cast<td::uint8>(type);
+}
+
+std::string cell_type_int_to_string(const td::uint8 &type_int) {
+    static const std::string type_names[] = {"Ordinary", "PrunnedBranch", "Library", "MerkleProof", "MerkleUpdate"};
+    CHECK(type_int < std::size(type_names));
+    return type_names[type_int];
+}
+
+vm::CellSlice cell_to_slice(const td::Ref<vm::Cell> &cell) {
+    vm::Cell::LoadedCell cell_loaded = cell->load_cell().move_as_ok();
+
+    if (!cell_loaded.data_cell->is_special()) {
+        return vm::load_cell_slice(cell);
+    }
+
+    bool is_special_flag;
+    vm::CellSlice cell_slice = vm::load_cell_slice_special(cell, is_special_flag);
+    CHECK(is_special_flag);
+    return cell_slice;
+}
+
+td::Ref<vm::Cell> path_to_root_cell(const std::string &block_path) {
+    std::ifstream in(block_path);
+
+    // mode
+    std::string tmp;
+    in >> tmp;
+
+    // base64 data
+    std::string base64_data;
+    in >> base64_data;
+    CHECK(!base64_data.empty());
+
+    td::BufferSlice binary_data(td::base64_decode(base64_data).move_as_ok());
+
+    // uint32_t first_32bits = 0;
+    // for (int i = 0; i < 4; ++i) {
+    //     first_32bits = (first_32bits << 8) ^ uint8_t(binary_data[i]);
+    // }
+    // std::cout << "first 32 bits in hex: 0x" << std::hex << first_32bits << std::dec << std::endl;
+    // exit(0);
+
+    td::Ref<vm::Cell> root = vm::std_boc_deserialize(binary_data).move_as_ok();
+
+    return root;
+}
+
+std::vector<td::Ref<vm::Cell> > top_sort(const td::Ref<vm::Cell>& root) {
+    std::set<const vm::Cell *> was;
+    std::vector<td::Ref<vm::Cell> > top;
+
+    auto dfs = [&](auto &&self, const td::Ref<vm::Cell>& cell) {
+        if (was.count(cell.get())) {
+            return;
+        }
+        was.insert(cell.get());
+
+        vm::Cell::LoadedCell cell_loaded = cell->load_cell().move_as_ok();
+        unsigned cnt_refs = cell_loaded.data_cell->get_refs_cnt();
+        for (unsigned i = 0; i < cnt_refs; i++) {
+            td::Ref<vm::Cell> ref = cell_loaded.data_cell->get_ref(i);
+            self(self, ref);
+        }
+
+        top.push_back(cell);
+    };
+
+    dfs(dfs, root);
+
+    std::reverse(std::begin(top), std::end(top));
+
+    return top;
+}
+
+uint8_t len_in_bytes(const uint64_t num) {
+    auto zeros = td::count_leading_zeroes64(num);
+    auto taken = 64 - zeros;
+    return std::max(1, (taken + 7) / 8);
+}

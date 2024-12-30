@@ -1,0 +1,18 @@
+# General CMake build artifacts
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+cmake-build-release
+cmake-build-debug
+
+# CLion/JetBrains-specific
+.idea/
+
+# Executables and other build outputs
+*.so
+*.dylib*
+*.out
+
+# OS-specific
+.DS_Store
