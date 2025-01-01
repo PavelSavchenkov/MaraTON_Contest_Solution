@@ -2,6 +2,7 @@
 #include <fstream>
 
 #include "utils.h"
+#include "vm/excno.hpp"
 
 std::set<const vm::Cell*> was;
 std::map<td::uint8, unsigned> cnt_type;
@@ -104,7 +105,7 @@ void dfs(const td::Ref<vm::Cell>& cell) {
 }
 
 void analyse(const std::string& block_path) {
-    td::Ref<vm::Cell> root = path_to_root_cell(block_path);
+    td::Ref<vm::Cell> root = read_from_filepath_to_root_cell(block_path);
 
     was.clear();
     depth.clear();

@@ -6,8 +6,6 @@
 #include "td/utils/lz4.h"
 #include "td/utils/base64.h"
 #include "vm/boc.h"
-#include "vm/excno.hpp"
-#include "block/block-auto.h"
 
 using CellType = vm::CellTraits::SpecialType;
 
@@ -34,7 +32,7 @@ vm::CellSlice cell_to_slice(const td::Ref<vm::Cell> &cell) {
     return cell_slice;
 }
 
-td::Ref<vm::Cell> path_to_root_cell(const std::string &block_path) {
+td::Ref<vm::Cell> read_from_filepath_to_root_cell(const std::string &block_path) {
     std::ifstream in(block_path);
 
     // mode
@@ -58,33 +56,6 @@ td::Ref<vm::Cell> path_to_root_cell(const std::string &block_path) {
     td::Ref<vm::Cell> root = vm::std_boc_deserialize(binary_data).move_as_ok();
 
     return root;
-}
-
-std::vector<td::Ref<vm::Cell> > top_sort(const td::Ref<vm::Cell>& root) {
-    std::set<const vm::Cell *> was;
-    std::vector<td::Ref<vm::Cell> > top;
-
-    auto dfs = [&](auto &&self, const td::Ref<vm::Cell>& cell) {
-        if (was.count(cell.get())) {
-            return;
-        }
-        was.insert(cell.get());
-
-        vm::Cell::LoadedCell cell_loaded = cell->load_cell().move_as_ok();
-        unsigned cnt_refs = cell_loaded.data_cell->get_refs_cnt();
-        for (unsigned i = 0; i < cnt_refs; i++) {
-            td::Ref<vm::Cell> ref = cell_loaded.data_cell->get_ref(i);
-            self(self, ref);
-        }
-
-        top.push_back(cell);
-    };
-
-    dfs(dfs, root);
-
-    std::reverse(std::begin(top), std::end(top));
-
-    return top;
 }
 
 uint8_t len_in_bytes(const uint64_t num) {
