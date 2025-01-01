@@ -1,11 +1,3 @@
-/*
-* solution.cpp
- *
- * Example solution.
- * This is (almost) how blocks are actually compressed in TON.
- * Normally, blocks are stored using vm::std_boc_serialize with mode=31.
- * Compression algorithm takes a block, converts it to mode=2 (which has less extra information) and compresses it using lz4.
- */
 #include <iostream>
 
 #include "utils.h"
@@ -126,13 +118,13 @@ struct MyCell {
 
 void push_as_bytes(std::basic_string<uint8_t> &data, uint64_t number, uint8_t bytes) {
     CHECK(bytes > 0);
-    std::vector<uint8_t> tmp;
+    std::basic_string<uint8_t> tmp;
     for (uint8_t i = 0; i < bytes; i++) {
         tmp.push_back(number & 0xFF);
         number >>= 8;
     }
     std::reverse(tmp.begin(), tmp.end());
-    data.insert(data.end(), tmp.begin(), tmp.end());
+    data += tmp;
 }
 
 std::vector<Ptr<MyCell> > convert_to_my_cells(td::Ref<vm::Cell> root) {
@@ -269,10 +261,14 @@ td::BufferSlice serialize(td::Ref<vm::Cell> root) {
         }
     }
 
-    std::basic_string<uint8_t> bytes;
-
     // the number of bytes needed to store a cell index and its references
     uint8_t bytes_for_index = 1;
+
+    std::basic_string<uint8_t> bytes_d1;
+    uint8_t byte_d1 = 0xFF;
+    std::basic_string<uint8_t> bytes_d2;
+    std::basic_string<uint8_t> bytes_refs;
+    std::basic_string<uint8_t> bytes_data;
 
     for (unsigned i = 0; i < n; ++i) {
         const auto my_cell = my_cells[i];
@@ -280,40 +276,68 @@ td::BufferSlice serialize(td::Ref<vm::Cell> root) {
             ++bytes_for_index;
         }
 
-        bytes.push_back(my_cell->d1());
+        // serialise d1 into 4 bits
+        {
+            const auto d1 = my_cell->d1();
+            CHECK((d1 & ~0x0F) == 0);
+            if (i % 2 == 0) {
+                // start new byte
+                byte_d1 = d1 << 4;
+            } else {
+                CHECK((byte_d1 & 0x0F) == 0);
+                byte_d1 ^= d1;
+                bytes_d1.push_back(byte_d1);
+                byte_d1 = 0xFF;
+            }
+        }
 
-        bytes.push_back(my_cell->d2());
+        bytes_d2.push_back(my_cell->d2());
         for (unsigned it = 0; it < my_cell->cnt_bits / 8; ++it) {
-            bytes.push_back(my_cell->data[it]);
+            bytes_data.push_back(my_cell->data[it]);
         }
         if (my_cell->cnt_bits % 8 != 0) {
             uint8_t pos = 7 - (my_cell->cnt_bits % 8);
             uint8_t last_byte = my_cell->data.at((my_cell->cnt_bits + 7) / 8 - 1);
             last_byte ^= (1u << pos);
-            bytes.push_back(last_byte);
+            bytes_data.push_back(last_byte);
         }
 
         // up to 4 refs
         for (unsigned it = 0; it < my_cell->cnt_refs; ++it) {
             // big endian
-            push_as_bytes(bytes, my_cell->refs[it], bytes_for_index);
+            push_as_bytes(bytes_refs, my_cell->refs[it], bytes_for_index);
         }
     }
+    if (byte_d1 != 0xFF) {
+        // fill first 4 bits with non-existent descriptor
+        CHECK((byte_d1 & 0x0F) == 0);
+        byte_d1 |= 0x0F;
+        bytes_d1.push_back(byte_d1);
+    }
+
+    std::basic_string<uint8_t> bytes;
+    bytes += bytes_d1;
+    bytes += bytes_refs;
+    bytes += bytes_data;
+    std::reverse(std::begin(bytes_d2), std::end(bytes_d2));
+    bytes += bytes_d2;
 
     return td::BufferSlice(reinterpret_cast<const char *>(bytes.data()), bytes.size());
 }
 
-td::Ref<vm::Cell> deserialise(td::Slice buffer_slice) {
-    std::vector<uint8_t> buffer(buffer_slice.data(), buffer_slice.data() + buffer_slice.size());
-
+td::Ref<vm::Cell> deserialise(const std::vector<uint8_t> &buffer) {
     std::vector<Ptr<MyCell> > my_cells;
 
     // build my_cells
-    size_t ptr_buffer = 0;
     uint8_t bytes_for_index = 1;
-    while (ptr_buffer < buffer.size()) {
-        Ptr<MyCell> my_cell = std::make_shared<MyCell>(); {
-            size_t cur_cell_pos = my_cells.size();
+    unsigned sum_bytes_refs = 0;
+    unsigned sum_bytes_data = 0;
+    for (unsigned i = 0; i / 2 < buffer.size(); ++i) {
+        Ptr<MyCell> my_cell = std::make_shared<MyCell>();
+
+        // update the number of bytes needed to store outgoing refs
+        {
+            unsigned cur_cell_pos = i + 1;
             if (cur_cell_pos == (1u << (8 * bytes_for_index))) {
                 ++bytes_for_index;
             }
@@ -321,26 +345,78 @@ td::Ref<vm::Cell> deserialise(td::Slice buffer_slice) {
 
         // read first descriptor byte
         {
-            uint8_t desc = buffer[ptr_buffer++];
+            uint8_t desc = (i % 2 == 0) ? (buffer[i / 2] >> 4) : (buffer[i / 2] & 0x0F);
+            CHECK((desc & 0xF0) == 0);
             unsigned r = desc & 7;
             CHECK(r <= 4);
             bool s = (desc >> 3) & 1;
 
             my_cell->cnt_refs = r;
             my_cell->is_special = s;
+
+            sum_bytes_refs += r * bytes_for_index;
         }
 
-        // second descriptor byte and then the cell's data
+        // second descriptor byte
         {
-            uint8_t desc = buffer[ptr_buffer++];
-            size_t cnt_bytes = desc >> 1;
+            uint8_t desc = buffer[buffer.size() - i - 1];
+            size_t cnt_bytes = (desc >> 1) + (desc & 1);
+            sum_bytes_data += cnt_bytes;
+            my_cell->cnt_bits = desc; // bad practice
+        }
+
+        my_cells.push_back(my_cell);
+
+        const unsigned cnt_bytes_pref = (i / 2) + 1;
+        const unsigned cnt_bytes_suff = i + 1;
+        const unsigned sum_bytes = cnt_bytes_pref + sum_bytes_refs + sum_bytes_data + cnt_bytes_suff;
+        if (sum_bytes >= buffer.size()) {
+            CHECK(sum_bytes == buffer.size());
+            break;
+        }
+    }
+    const auto n = my_cells.size();
+    CHECK(!my_cells.empty());
+
+    // read refs and data
+    bytes_for_index = 1;
+    unsigned ptr_refs = (n + 1) / 2;
+    unsigned ptr_data = ptr_refs + sum_bytes_refs;
+    for (unsigned i = 0; i < n; ++i) {
+        auto& my_cell = my_cells[i];
+
+        // update the number of bytes needed to store outgoing refs
+        {
+            unsigned cur_cell_pos = i + 1;
+            if (cur_cell_pos == (1u << (8 * bytes_for_index))) {
+                ++bytes_for_index;
+            }
+        }
+
+        // read up to 4 refs
+        {
+            for (unsigned j = 0; j < my_cell->cnt_refs; j++) {
+                // bytes_for_index bytes in big endian
+                unsigned ref_id = 0;
+                for (unsigned iter2 = 0; iter2 < bytes_for_index; ++iter2) {
+                    ref_id = (ref_id << 8) ^ buffer[ptr_refs++];
+                }
+                my_cell->refs[j] = ref_id;
+            }
+        }
+
+        // read data
+        {
+            const auto desc = my_cell->cnt_bits;
+            my_cell->cnt_bits = 0;
+            unsigned cnt_bytes = desc >> 1;
             while (cnt_bytes > 0) {
-                my_cell->data.push_back(buffer[ptr_buffer++]);
+                my_cell->data.push_back(buffer[ptr_data++]);
                 --cnt_bytes;
             }
             my_cell->cnt_bits = my_cell->data.size() * 8;
             if (desc & 1) {
-                uint8_t tail = buffer[ptr_buffer++];
+                uint8_t tail = buffer[ptr_data++];
                 CHECK(tail != 0);
                 int cnt_trailing_zeros = __builtin_ctz(tail);
                 CHECK(cnt_trailing_zeros <= 6);
@@ -351,27 +427,11 @@ td::Ref<vm::Cell> deserialise(td::Slice buffer_slice) {
                 my_cell->cnt_bits += cnt_bits_pref;
             }
         }
-
-        // read up to 4 refs
-        {
-            for (unsigned j = 0; j < my_cell->cnt_refs; j++) {
-                // bytes_for_index bytes in big endian
-                unsigned ref_id = 0;
-                for (unsigned iter2 = 0; iter2 < bytes_for_index; ++iter2) {
-                    ref_id = (ref_id << 8) ^ buffer[ptr_buffer++];
-                }
-                my_cell->refs[j] = ref_id;
-            }
-        }
-
-        my_cells.push_back(my_cell);
-        CHECK(ptr_buffer <= buffer.size());
     }
-    const auto n = my_cells.size();
-    CHECK(!my_cells.empty());
 
+    std::vector<unsigned> order;
     // top sort
-    std::vector<unsigned> order; {
+    {
         std::vector<char> was(n, false);
         auto dfs = [&](auto &&self, unsigned i) -> void {
             CHECK(!was[i]);
@@ -451,6 +511,11 @@ td::Ref<vm::Cell> deserialise(td::Slice buffer_slice) {
     return cells[order.back()];
 }
 
+td::Ref<vm::Cell> deserialise_slice(td::Slice buffer_slice) {
+    std::vector<uint8_t> buffer(buffer_slice.data(), buffer_slice.data() + buffer_slice.size());
+    return deserialise(buffer);
+}
+
 std::string compress(const std::string &base64_data) {
     CHECK(!base64_data.empty());
     td::BufferSlice data(td::base64_decode(base64_data).move_as_ok());
@@ -458,7 +523,7 @@ std::string compress(const std::string &base64_data) {
 
     td::BufferSlice serialized_my = serialize(root);
     // std::cout << "my serialised, number of bytes =  " << serialized.size() << std::endl;
-    td::BufferSlice serialized_their = vm::std_boc_serialize(root, 0).move_as_ok();
+    // td::BufferSlice serialized_their = vm::std_boc_serialize(root, 0).move_as_ok();
 
     auto serialized = std::move(serialized_my);
 
@@ -473,7 +538,7 @@ std::string decompress(const std::string &base64_data) {
 
     data = td::lz4_decompress(data, 2 << 20).move_as_ok();
 
-    td::Ref<vm::Cell> root = deserialise(data);
+    td::Ref<vm::Cell> root = deserialise_slice(data);
 
     // td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
 
