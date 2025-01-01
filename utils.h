@@ -8,6 +8,8 @@
 #include "vm/boc.h"
 
 using CellType = vm::CellTraits::SpecialType;
+template<typename T>
+using Ptr = std::shared_ptr<T>;
 
 td::uint8 cell_type_to_int(const CellType &type) {
     return static_cast<td::uint8>(type);
@@ -62,4 +64,16 @@ uint8_t len_in_bytes(const uint64_t num) {
     auto zeros = td::count_leading_zeroes64(num);
     auto taken = 64 - zeros;
     return std::max(1, (taken + 7) / 8);
+}
+
+void push_as_bytes(std::basic_string<uint8_t> &data, uint64_t number, uint8_t bytes) {
+    CHECK(bytes > 0);
+    std::basic_string<uint8_t> tmp;
+    for (uint8_t i = 0; i < bytes; i++) {
+        tmp.push_back(number & 0xFF);
+        number >>= 8;
+    }
+    CHECK(number == 0);
+    std::reverse(tmp.begin(), tmp.end());
+    data += tmp;
 }

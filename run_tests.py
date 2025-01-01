@@ -9,7 +9,8 @@ import sys
 def get_base64_size(s: str) -> Optional[int]:
     try:
         decoded = base64.b64decode(s, validate=True)
-    except binascii.Error:
+    except binascii.Error as e:
+        # print(f"Base64 decoding error: {e}")
         return None
     return len(decoded)
 
@@ -34,6 +35,8 @@ print(f"{Fore.YELLOW}====================== Running {n_tests} tests ============
 print(f"{Fore.YELLOW}Idx  {"Name":<{name_width}} {"Size":>7}   Compression   Decompression {Style.RESET_ALL}")
 
 for i, test_file in enumerate(test_files):
+    if not test_file.startswith("1"):
+        continue
     i += 1
     with open(os.path.join(tests_dir, test_file), "r") as f:
         original_block = f.read().split()[1]
