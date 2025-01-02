@@ -507,7 +507,17 @@ std::string compress(const std::string &base64_data) {
     td::BufferSlice data(td::base64_decode(base64_data).move_as_ok());
     td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok(); {
         auto S = serialize(root);
-        S = LZ_compressor::compress(S);
+        {
+            std::basic_string<uint8_t> best_S;
+            for (unsigned min_match_len = 4; min_match_len <= 8; ++min_match_len) {
+                auto cur = LZ_compressor::compress(S, min_match_len);
+                if (best_S.empty() || cur.size() < best_S.size()) {
+                    best_S = cur;
+                }
+            }
+            CHECK(!best_S.empty());
+            S = best_S;
+        }
         // S = LZ_compressor::compress_standard(S);
         S = huffman::encode_8(S);
         auto base64 = td::base64_encode(td::Slice(S.data(), S.size()));

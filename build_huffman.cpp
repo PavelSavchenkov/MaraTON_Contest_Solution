@@ -31,7 +31,7 @@ int main() {
 
             {
                 auto S = Serializator::serialize(root);
-                S = LZ_compressor::compress(S);
+                S = LZ_compressor::compress(S, 4);
                 // S = LZ_compressor::compress_standard(S);
                 std::cout << "take encoded data from " << line << std::endl;
 
