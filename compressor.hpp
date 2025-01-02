@@ -8,6 +8,8 @@
 namespace LZ_compressor {
 static const uint8_t MAX_BYTES_FOR_INDEX = 2;
 static const unsigned MATCH_OFFSET = 4;
+static const uint8_t LITERAL_NIBBLE_BITS = 6;
+static const auto MATCH_NIBBLE_BITS = 8 - LITERAL_NIBBLE_BITS;
 
 std::vector<unsigned> build_suff_arr(const std::basic_string<uint8_t> &s) {
     // std::vector<unsigned> s(s_.size() + 1);
@@ -262,11 +264,11 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data, unsi
     };
     auto dump_tokens_and_literal = [&](unsigned match_length) {
         unsigned literal_length = literal_buf.size();
-        unsigned literal_nibble = std::min(literal_length, 15u);
+        unsigned literal_nibble = std::min(literal_length, (1u << LITERAL_NIBBLE_BITS) - 1);
         literal_length -= literal_nibble;
 
         uint8_t token = 0;
-        token = literal_nibble << 4;
+        token = literal_nibble << MATCH_NIBBLE_BITS;
 
         CHECK(match_length >= MIN_MATCH_LENGTH);
         if (match_length == -1u) {
@@ -274,20 +276,20 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data, unsi
         } else {
             match_length -= MATCH_OFFSET;
         }
-        unsigned match_nibble = std::min(match_length, 15u);
+        unsigned match_nibble = std::min(match_length, (1u << MATCH_NIBBLE_BITS) - 1);
         match_length -= match_nibble;
         token ^= match_nibble;
 
         out.push_back(token);
 
-        if (literal_nibble == 15) {
+        if (literal_nibble == (1u << LITERAL_NIBBLE_BITS) - 1) {
             dump_int_number_per_255(literal_length);
         }
 
         out += literal_buf;
         literal_buf.clear();
 
-        if (match_nibble == 15) {
+        if (match_nibble == (1u << MATCH_NIBBLE_BITS) - 1) {
             dump_int_number_per_255(match_length);
         }
     };
@@ -336,8 +338,8 @@ std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
     for (unsigned i = 0; i < data.size();) {
         uint8_t token = data[i++];
 
-        unsigned literal_length = token >> 4;
-        if (literal_length == 15) {
+        unsigned literal_length = token >> MATCH_NIBBLE_BITS;
+        if (literal_length == (1u << LITERAL_NIBBLE_BITS) - 1) {
             while (1) {
                 literal_length += data[i];
                 if (data[i++] < 255) {
@@ -352,8 +354,8 @@ std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
             out += data[i++];
         }
         // read match length
-        unsigned match_length = token & 0x0F;
-        if (match_length == 15) {
+        unsigned match_length = token & ((1u << MATCH_NIBBLE_BITS) - 1);
+        if (match_length == (1u << MATCH_NIBBLE_BITS) - 1) {
             while (true) {
                 match_length += data[i];
                 if (data[i++] < 255) {
