@@ -5,7 +5,7 @@ int main() {
     const std::string pref = "/Users/pavel/Programming/MaraTON/ton-sample-tests/";
     const std::string files_names_file = pref + "file_list.txt";
 
-    std::array<unsigned, huffman::HUFFMAN_SIZE> cnt{};
+    std::array<double, huffman::HUFFMAN_SIZE> cnt{};
 
     std::ifstream files_names(files_names_file);
     std::string line;
@@ -44,7 +44,7 @@ int main() {
                     }
                     ++bits_ptr;
                     if (bits_ptr % huffman::HUFFMAN_BITS == 0) {
-                        ++cnt[number];
+                        cnt[number] += 1.0;
                         number = 0;
                     }
                 }
@@ -52,5 +52,19 @@ int main() {
         }
     }
 
-    huffman::output_freq(cnt);
+    double min_cnt = std::numeric_limits<double>::max();
+    double max_cnt = 0;
+    for (unsigned i = 0; i < huffman::HUFFMAN_SIZE; ++i) {
+        min_cnt = std::min(min_cnt, cnt[i]);
+        max_cnt = std::max(max_cnt, cnt[i]);
+    }
+
+    std::array<unsigned, huffman::HUFFMAN_SIZE> cnt_int{};
+    unsigned R = (1 << 30) / huffman::HUFFMAN_SIZE;
+    const double coef = 1.0 / (max_cnt - min_cnt) * R;
+    for (unsigned i = 0; i < huffman::HUFFMAN_SIZE; ++i) {
+        cnt_int[i] = cnt[i] * coef;
+    }
+
+    huffman::output_freq(cnt_int);
 }
