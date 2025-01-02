@@ -179,6 +179,17 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data) {
     };
     unsigned leftmost_alive = 0;
     uint8_t bytes_for_index = 1;
+    std::map<uint64_t, unsigned> map_pref;
+    auto make_alive = [&](unsigned i) {
+        alive_pos.insert(pos[i]);
+        if (i + MIN_MATCH_LENGTH <= n) {
+            uint64_t key = 0;
+            for (unsigned j = 0; j < MIN_MATCH_LENGTH; ++j) {
+                key = (key << 8) ^ data[i + j];
+            }
+            map_pref[key] = i;
+        }
+    };
     for (unsigned i = 0; i < n;) {
         if (i >= (1u << (8 * bytes_for_index)) && bytes_for_index < MAX_BYTES_FOR_INDEX) {
             ++bytes_for_index;
@@ -213,6 +224,25 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data) {
             }
         }
 
+        // check the last occurence of suff
+        // OVERWRITE suff arr search
+        {
+            best_len = 0;
+            best_prev = -1u;
+            if (i + MIN_MATCH_LENGTH <= n) {
+                uint64_t key = 0;
+                for (unsigned j = 0; j < MIN_MATCH_LENGTH; ++j) {
+                    key = (key << 8) ^ data[i + j];
+                }
+                if (map_pref.count(key)) {
+                    best_prev = map_pref[key];
+                    if (len_in_bytes(i - best_prev) <= MAX_BYTES_FOR_INDEX) {
+                        best_len = get_lcp(best_prev, i);
+                    }
+                }
+            }
+        }
+
         if (best_len >= MIN_MATCH_LENGTH) {
             CHECK(best_len > 0);
 
@@ -224,11 +254,12 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data) {
             CHECK(len_in_bytes(i - j) <= MAX_BYTES_FOR_INDEX);
             push_as_bytes(out, i - j, bytes_for_index);
             for (unsigned it = 0; it < best_len; ++it) {
-                alive_pos.insert(pos[i++]);
+                make_alive(i);
+                ++i;
             }
         } else {
             literal_buf.push_back(data[i]);
-            alive_pos.insert(pos[i]);
+            make_alive(i);
             ++i;
         }
     }
