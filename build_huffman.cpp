@@ -14,7 +14,7 @@ int main() {
             continue;
         }
         line = pref + line;
-        std::cout << "Found file = " << line << std::endl;
+        // std::cout << "Found file = " << line << std::endl;
         std::ifstream cur_file(line);
         // start encoding
         {
@@ -26,27 +26,20 @@ int main() {
             cur_file >> base64_data;
             CHECK(!base64_data.empty());
 
-            td::BufferSlice data(td::base64_decode(base64_data).move_as_ok());
-            td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
+            const auto S_ = Serializator::compress(base64_data, true);
+            const std::basic_string<uint8_t> S(reinterpret_cast<const uint8_t*>(S_.data()), S_.size());
 
-            {
-                auto S = Serializator::serialize(root);
-                S = LZ_compressor::compress(S, 4);
-                // S = LZ_compressor::compress_standard(S);
-                std::cout << "take encoded data from " << line << std::endl;
-
-                unsigned bits_ptr = 0;
-                unsigned number = 0;
-                while (bits_ptr < S.size() * 8) {
-                    uint8_t bit = (S[bits_ptr / 8] >> (7 - bits_ptr % 8)) & 1;
-                    if (bit) {
-                        number ^= 1u << (huffman::HUFFMAN_BITS - 1 - bits_ptr % huffman::HUFFMAN_BITS);
-                    }
-                    ++bits_ptr;
-                    if (bits_ptr % huffman::HUFFMAN_BITS == 0) {
-                        cnt[number] += 1.0;
-                        number = 0;
-                    }
+            unsigned bits_ptr = 0;
+            unsigned number = 0;
+            while (bits_ptr < S.size() * 8) {
+                uint8_t bit = (S[bits_ptr / 8] >> (7 - bits_ptr % 8)) & 1;
+                if (bit) {
+                    number ^= 1u << (huffman::HUFFMAN_BITS - 1 - bits_ptr % huffman::HUFFMAN_BITS);
+                }
+                ++bits_ptr;
+                if (bits_ptr % huffman::HUFFMAN_BITS == 0) {
+                    cnt[number] += 1.0;
+                    number = 0;
                 }
             }
         }

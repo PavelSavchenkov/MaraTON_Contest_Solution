@@ -11,6 +11,10 @@ using CellType = vm::CellTraits::SpecialType;
 template<typename T>
 using Ptr = std::shared_ptr<T>;
 
+std::string to_string(const std::basic_string<uint8_t>& bytes) {
+    return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
 td::uint8 cell_type_to_int(const CellType &type) {
     return static_cast<td::uint8>(type);
 }

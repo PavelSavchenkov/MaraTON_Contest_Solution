@@ -502,37 +502,32 @@ td::Ref<vm::Cell> deserialise_slice(td::Slice buffer_slice) {
     return deserialise(buffer);
 }
 
-std::string compress(const std::string &base64_data) {
+std::string compress(const std::string &base64_data, bool return_before_huffman = false) {
     CHECK(!base64_data.empty());
     td::BufferSlice data(td::base64_decode(base64_data).move_as_ok());
-    td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok(); {
-        auto S = serialize(root);
-        {
-            std::basic_string<uint8_t> best_S;
-            for (unsigned min_match_len = 4; min_match_len <= 8; ++min_match_len) {
-                auto cur = LZ_compressor::compress(S, min_match_len);
-                if (best_S.empty() || cur.size() < best_S.size()) {
-                    best_S = cur;
-                }
+    td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
+
+    auto S = serialize(root);
+    {
+        std::basic_string<uint8_t> best_S;
+        for (unsigned min_match_len = 4; min_match_len <= 8; ++min_match_len) {
+            auto cur = LZ_compressor::compress(S, min_match_len, false);
+            if (best_S.empty() || cur.size() < best_S.size()) {
+                best_S = cur;
             }
-            CHECK(!best_S.empty());
-            S = best_S;
         }
-        // S = LZ_compressor::compress_standard(S);
-        S = huffman::encode_8(S);
-        auto base64 = td::base64_encode(td::Slice(S.data(), S.size()));
-        return base64;
+        LZ_compressor::MEM = LZ_compressor::CompressionPrecalc();
+        CHECK(!best_S.empty());
+        S = best_S;
     }
+    // S = LZ_compressor::compress_standard(S);
 
-    td::BufferSlice serialized_my = serialize_slice(root);
-    // std::cout << "my serialised, number of bytes =  " << serialized.size() << std::endl;
-    // td::BufferSlice serialized_their = vm::std_boc_serialize(root, 0).move_as_ok();
-
-    auto serialized = std::move(serialized_my);
-
-    serialized = td::lz4_compress(serialized);
-
-    return base64_encode(serialized);
+    if (return_before_huffman) {
+        return to_string(S);
+    }
+    S = huffman::encode_8(S);
+    auto base64 = td::base64_encode(td::Slice(S.data(), S.size()));
+    return base64;
 }
 
 std::string decompress(const std::string &base64_data) {

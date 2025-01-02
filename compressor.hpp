@@ -241,7 +241,7 @@ struct CompressionPrecalc {
     }
 } MEM;
 
-std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data, unsigned MIN_MATCH_LENGTH) {
+std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data, unsigned MIN_MATCH_LENGTH, bool clear_mem = true) {
     CHECK(MATCH_OFFSET <= MIN_MATCH_LENGTH);
 
     if (MEM.empty()) {
@@ -320,6 +320,10 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data, unsi
     }
     if (!literal_buf.empty()) {
         dump_tokens_and_literal(-1u);
+    }
+
+    if (clear_mem) {
+        MEM = CompressionPrecalc();
     }
     return out;
 }
