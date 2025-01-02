@@ -507,9 +507,9 @@ std::string compress(const std::string &base64_data) {
     td::BufferSlice data(td::base64_decode(base64_data).move_as_ok());
     td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok(); {
         auto S = serialize(root);
-        // S = LZ_compressor::compress(S);
-        S = LZ_compressor::compress_standard(S);
-        S = huffman::encode_8(S);
+        S = LZ_compressor::compress(S);
+        // S = LZ_compressor::compress_standard(S);
+        // S = huffman::encode_8(S);
         auto base64 = td::base64_encode(td::Slice(S.data(), S.size()));
         return base64;
     }
@@ -529,9 +529,9 @@ std::string decompress(const std::string &base64_data) {
     CHECK(!base64_data.empty()); {
         std::string data = td::base64_decode(base64_data).move_as_ok();
         std::basic_string<uint8_t> S(data.begin(), data.end());
-        S = huffman::decode_8(S);
-        // S = LZ_compressor::decompress(S);
-        S = LZ_compressor::decompress_standard(S);
+        // S = huffman::decode_8(S);
+        S = LZ_compressor::decompress(S);
+        // S = LZ_compressor::decompress_standard(S);
         td::Ref<vm::Cell> root = deserialise(S);
         td::BufferSlice serialised_properly = vm::std_boc_serialize(root, 31).move_as_ok();
         return base64_encode(serialised_properly);

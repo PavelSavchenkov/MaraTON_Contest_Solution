@@ -5,9 +5,10 @@
 #include <string>
 #include <td/utils/check.h>
 
-// #include "utils.h"
-
 namespace LZ_compressor {
+static const uint8_t MAX_BYTES_FOR_INDEX = 2;
+static const unsigned MIN_MATCH_LENGTH = 4;
+
 std::vector<unsigned> build_suff_arr(const std::basic_string<uint8_t> &s) {
     const unsigned n = s.size();
     std::vector<unsigned> p(n);
@@ -69,8 +70,6 @@ std::vector<unsigned> build_suff_arr(const std::basic_string<uint8_t> &s) {
     return p;
 }
 
-static const uint8_t MAX_BYTES_FOR_INDEX = 2;
-
 std::basic_string<uint8_t> compress_standard(const std::basic_string<uint8_t> &data) {
     auto res = td::lz4_compress(td::BufferSlice(reinterpret_cast<const char *>(data.data()), data.size()));
     return {reinterpret_cast<const uint8_t *>(res.data()), res.size()};
@@ -87,6 +86,21 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data) {
     for (unsigned i = 0; i < n; ++i) {
         pos[p[i]] = i;
     }
+
+    // {
+    //     auto data2 = data + data;
+    //     for (unsigned i = 0; i + 1 < n; ++i) {
+    //         unsigned p1 = p[i];
+    //         unsigned p2 = p[i + 1];
+    //         auto sub1 = data2.substr(p1, n);
+    //         auto sub2 = data2.substr(p2, n);
+    //         if (sub1 > sub2) {
+    //             std::cout << "i = " << i << ", n = " << n << std::endl;
+    //             std::cout << "p1 = " << p1 << ", p2 = " << p2 << std::endl;
+    //             exit(0);
+    //         }
+    //     }
+    // }
 
     // {
     //     std::vector<unsigned> my_p(n);
@@ -122,39 +136,46 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data) {
     std::basic_string<uint8_t> out;
     std::set<unsigned> alive_pos;
     std::basic_string<uint8_t> literal_buf;
-    auto dump_literal = [&]() -> void {
-        if (literal_buf.empty()) {
-            return;
-        }
-        unsigned len = literal_buf.size();
-        for (unsigned it = 0; ; ++it) {
-            const unsigned limit = (it == 0) ? 127 : 255;
-            const unsigned cur = std::min(len, limit);
-            const unsigned cur_byte = (it == 0) ? (cur * 2 + 1) : cur;
-            CHECK(cur_byte <= 255);
-            out.push_back(cur_byte);
-            len -= cur;
-            if (cur < limit) {
+    auto dump_int_number_per_255 = [&](unsigned number) -> void {
+        while (1) {
+            unsigned cur = std::min(number, 255u);
+            number -= cur;
+            out.push_back(cur);
+            if (cur < 255) {
                 break;
             }
         }
-        CHECK(len == 0);
+    };
+    auto dump_tokens_and_literal = [&](unsigned match_length) {
+        unsigned literal_length = literal_buf.size();
+        unsigned literal_nibble = std::min(literal_length, 15u);
+        literal_length -= literal_nibble;
+
+        uint8_t token = 0;
+        token = literal_nibble << 4;
+
+        CHECK(match_length >= MIN_MATCH_LENGTH);
+        if (match_length == -1u) {
+            match_length = 0;
+        } else {
+            match_length -= MIN_MATCH_LENGTH;
+        }
+        unsigned match_nibble = std::min(match_length, 15u);
+        match_length -= match_nibble;
+        token ^= match_nibble;
+
+        out.push_back(token);
+
+        if (literal_nibble == 15) {
+            dump_int_number_per_255(literal_length);
+        }
+
         out += literal_buf;
         literal_buf.clear();
-    };
-    auto bytes_for_len = [&](unsigned len) -> unsigned {
-        CHECK(len <= n);
-        unsigned cnt = 0;
-        while (true) {
-            const unsigned limit = (cnt == 0) ? 127 : 255;
-            const unsigned cur = std::min(limit, len);
-            len -= cur;
-            ++cnt;
-            if (cur < limit) {
-                break;
-            }
+
+        if (match_nibble == 15) {
+            dump_int_number_per_255(match_length);
         }
-        return cnt;
     };
     unsigned leftmost_alive = 0;
     uint8_t bytes_for_index = 1;
@@ -192,33 +213,16 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data) {
             }
         }
 
-        // encoding with link should be better than encoding with literal
-        unsigned with_literal = best_len + (literal_buf.empty() ? 1 : 0);
-        unsigned with_link = bytes_for_len(best_len) + bytes_for_index;
-        if (with_link < with_literal) {
+        if (best_len >= MIN_MATCH_LENGTH) {
             CHECK(best_len > 0);
-            dump_literal();
 
-            // dump length of the match
-            unsigned len = best_len;
-            for (unsigned it = 0; ; ++it) {
-                const unsigned limit = (it == 0) ? 127 : 255;
-                const unsigned cur = std::min(limit, len);
-                const unsigned cur_byte = (it == 0) ? (cur * 2 + 0) : cur;
-                out.push_back(cur_byte);
-                len -= cur;
-                if (cur < limit) {
-                    break;
-                }
-            }
-            CHECK(len == 0);
+            dump_tokens_and_literal(best_len);
 
-            // dump match position
+            // dump match offset
             unsigned j = best_prev;
             CHECK(j < i);
             CHECK(len_in_bytes(i - j) <= MAX_BYTES_FOR_INDEX);
             push_as_bytes(out, i - j, bytes_for_index);
-            CHECK(best_len > 0);
             for (unsigned it = 0; it < best_len; ++it) {
                 alive_pos.insert(pos[i++]);
             }
@@ -228,7 +232,9 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data) {
             ++i;
         }
     }
-    dump_literal();
+    if (!literal_buf.empty()) {
+        dump_tokens_and_literal(-1u);
+    }
     return out;
 }
 
@@ -244,55 +250,54 @@ std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
     std::basic_string<uint8_t> out;
     uint8_t bytes_for_index = 1;
     for (unsigned i = 0; i < data.size();) {
+        uint8_t token = data[i++];
+
+        unsigned literal_length = token >> 4;
+        if (literal_length == 15) {
+            while (1) {
+                literal_length += data[i];
+                if (data[i++] < 255) {
+                    break;
+                }
+            }
+        }
+        // read literals
+        while (literal_length > 0) {
+            --literal_length;
+            CHECK(i < data.size());
+            out += data[i++];
+        }
+        // read match length
+        unsigned match_length = token & 0x0F;
+        if (match_length == 15) {
+            while (1) {
+                match_length += data[i];
+                if (data[i++] < 255) {
+                    break;
+                }
+            }
+        }
+        // read offset
+        if (i == data.size()) {
+            CHECK(match_length == 0);
+            break;
+        }
+        match_length += MIN_MATCH_LENGTH;
+
         if (out.size() >= (1u << (8 * bytes_for_index)) && bytes_for_index < MAX_BYTES_FOR_INDEX) {
             ++bytes_for_index;
         }
 
-        uint8_t token = data[i];
-        if (token & 1) {
-            // literal
-            unsigned len = 0;
-            for (unsigned it = 0; ; ++it) {
-                const unsigned limit = (it == 0) ? 127 : 255;
-                uint8_t byte = data[i++];
-                const unsigned cur = (it == 0) ? (byte >> 1) : (byte);
-                len += cur;
-                CHECK(cur <= limit);
-                if (cur < limit) {
-                    break;
-                }
-            }
-            for (unsigned it = 0; it < len; ++it) {
-                out.push_back(data[i++]);
-            }
-        } else {
-            // match with earlier suffix
-
-            // decode match length
-            unsigned len = 0;
-            for (unsigned it = 0; ; ++it) {
-                const unsigned limit = (it == 0) ? 127 : 255;
-                uint8_t byte = data[i++];
-                const unsigned cur = (it == 0) ? (byte >> 1) : (byte);
-                len += cur;
-                CHECK(cur <= limit);
-                if (cur < limit) {
-                    break;
-                }
-            }
-
-            // decode match offset
-            unsigned offset = 0;
-            for (unsigned it = 0; it < bytes_for_index; ++it) {
-                offset = (offset << 8) ^ data[i++];
-            }
-            CHECK(out.size() >= offset);
-            unsigned j = out.size() - offset;
-            for (unsigned it = 0; it < len; ++it) {
-                const auto byte = out[j];
-                out.push_back(byte);
-                ++j;
-            }
+        unsigned offset = 0;
+        for (unsigned it = 0; it < bytes_for_index; ++it) {
+            offset = (offset << 8) ^ data[i++];
+        }
+        CHECK(out.size() >= offset);
+        unsigned j = out.size() - offset;
+        for (unsigned it = 0; it < match_length; ++it) {
+            const auto byte = out[j];
+            out.push_back(byte);
+            ++j;
         }
     }
     return out;

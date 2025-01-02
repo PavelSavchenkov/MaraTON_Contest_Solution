@@ -31,8 +31,8 @@ int main() {
 
             {
                 auto S = Serializator::serialize(root);
-                // S = LZ_compressor::compress(S);
-                S = LZ_compressor::compress_standard(S);
+                S = LZ_compressor::compress(S);
+                // S = LZ_compressor::compress_standard(S);
                 std::cout << "take encoded data from " << line << std::endl;
 
                 unsigned bits_ptr = 0;
