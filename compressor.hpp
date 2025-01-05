@@ -100,40 +100,6 @@ struct CompressionPrecalc {
             pos[p[i]] = i;
         }
 
-        // {
-        //     auto data2 = data + data;
-        //     for (unsigned i = 0; i + 1 < n; ++i) {
-        //         unsigned p1 = p[i];
-        //         unsigned p2 = p[i + 1];
-        //         auto sub1 = data2.substr(p1, n);
-        //         auto sub2 = data2.substr(p2, n);
-        //         if (sub1 > sub2) {
-        //             std::cout << "i = " << i << ", n = " << n << std::endl;
-        //             std::cout << "p1 = " << p1 << ", p2 = " << p2 << std::endl;
-        //             exit(0);
-        //         }
-        //     }
-        // }
-
-        // {
-        //     std::vector<unsigned> my_p(n);
-        //     std::iota(std::begin(my_p), std::end(my_p), 0);
-        //     std::sort(std::begin(my_p), std::end(my_p), [&](const unsigned &a, const unsigned &b) {
-        //         return data.substr(a, n - a) < data.substr(b, n - b);
-        //     });
-        //     std::cout << "p: " << std::endl;
-        //     for (unsigned i = 0; i < n; ++i) {
-        //         auto sub = data.substr(p[i], n - p[i]);
-        //         std::cout << i << " p[i] = " << p[i] << " -> " << std::string(sub.begin(), sub.end()) << std::endl;
-        //     }
-        //     std::cout << "my_p: " << std::endl;
-        //     for (unsigned i = 0; i < n; ++i) {
-        //         auto sub = data.substr(my_p[i], n - my_p[i]);
-        //         std::cout << i << " my_p[i] = " << my_p[i] << " -> " << std::string(sub.begin(), sub.end()) << std::endl;
-        //     }
-        //     CHECK(p == my_p);
-        // }
-
         auto get_lcp = [&](unsigned j, unsigned i) -> unsigned {
             if (i < j) {
                 std::swap(i, j);
@@ -200,13 +166,15 @@ struct CompressionPrecalc {
 } MEM;
 
 std::basic_string<uint8_t> compress(
-    const std::basic_string<uint8_t> &data,
+    const std::basic_string<uint8_t> &data_,
+    const std::basic_string<uint8_t> &dict,
     unsigned MIN_MATCH_LENGTH,
     bool clear_mem = true
 ) {
-    CHECK(!data.empty());
+    CHECK(!data_.empty());
     CHECK(MATCH_OFFSET <= MIN_MATCH_LENGTH);
 
+    const auto data = dict + data_;
     if (MEM.empty()) {
         MEM.precalc(data);
     }
@@ -224,8 +192,7 @@ std::basic_string<uint8_t> compress(
     // number of bits to store offset size
     auto bits_for_offset = static_cast<uint8_t>(-1u);
     // minimal offset size. e.g. x in "bits for offset" field means the offset takes "x + min_bits_for_offset" bits
-    auto min_bits_for_offset = static_cast<uint8_t>(-1u);
-    {
+    auto min_bits_for_offset = static_cast<uint8_t>(-1u); {
         // offset size can be up to data.size()-1
         const uint8_t bits_for_max_offset = len_in_bits(data.size() - 1); // e.g. 20
         bits_for_offset = len_in_bits(bits_for_max_offset); // e.g. 5
@@ -253,7 +220,7 @@ std::basic_string<uint8_t> compress(
     std::basic_string<uint8_t> literal_buf;
     std::basic_string<uint8_t> all_literals;
     auto dump_int_number_per_255 = [&](unsigned number) -> void {
-        while (1) {
+        while (true) {
             unsigned cur = std::min(number, 255u);
             number -= cur;
             store_uint(cur, 8);
@@ -263,7 +230,9 @@ std::basic_string<uint8_t> compress(
             }
         }
     };
+    unsigned cnt_tokens = 0;
     auto dump_tokens_and_literal = [&](unsigned match_length) {
+        ++cnt_tokens;
         unsigned literal_length = literal_buf.size();
         unsigned literal_nibble = std::min(literal_length, (1u << LITERAL_NIBBLE_BITS) - 1);
         literal_length -= literal_nibble;
@@ -295,12 +264,7 @@ std::basic_string<uint8_t> compress(
         }
     };
 
-    uint8_t bytes_for_index = 1;
-    for (unsigned i = 0; i < MEM.n;) {
-        if (i >= (1u << (8 * bytes_for_index)) && bytes_for_index < MAX_BYTES_FOR_INDEX) {
-            ++bytes_for_index;
-        }
-
+    for (unsigned i = dict.size(); i < MEM.n;) {
         if (MEM.best_len[i] >= MIN_MATCH_LENGTH) {
             dump_tokens_and_literal(MEM.best_len[i]);
 
@@ -331,7 +295,7 @@ std::basic_string<uint8_t> compress(
         MEM = CompressionPrecalc();
     }
 
-    for (const auto& byte : all_literals) {
+    for (const auto &byte: all_literals) {
         store_uint(byte, 8);
     }
     store_uint(1, 1);
@@ -354,8 +318,14 @@ struct Token {
     unsigned match_length{-1u};
 };
 
-std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
-    CHECK(!data.empty());
+std::basic_string<uint8_t> decompress(
+    const std::basic_string<uint8_t> &data,
+    const std::basic_string<uint8_t> &dict = {}
+) {
+    if (data.empty()) {
+        return {};
+    }
+
     unsigned data_len_bits = data.size() * 8;
     CHECK(data.back() != 0);
     for (uint8_t tail = 0; tail < 8; ++tail) {
@@ -379,7 +349,7 @@ std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
 
     std::vector<Token> tokens;
     unsigned sum_literals_length = 0;
-    while (1) {
+    while (true) {
         Token token;
         uint8_t byte = get_uint(8);
 
@@ -426,8 +396,8 @@ std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
         tokens.push_back(token);
     }
 
-    std::basic_string<uint8_t> out;
-    for (const auto& token : tokens) {
+    std::basic_string<uint8_t> out = dict;
+    for (const auto &token: tokens) {
         // read literal
         CHECK(token.literal_length != -1u);
         for (unsigned it = 0; it < token.literal_length; ++it) {
@@ -436,6 +406,7 @@ std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
 
         // read match
         if (token.offset != -1u) {
+            CHECK(token.offset <= out.size());
             const unsigned start_index = out.size() - token.offset;
             for (unsigned it = 0; it < token.match_length; ++it) {
                 const uint8_t ch = out[start_index + it];
@@ -444,6 +415,6 @@ std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
         }
     }
 
-    return out;
+    return out.substr(dict.size());
 }
 };

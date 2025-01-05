@@ -37,10 +37,10 @@ int main() {
         dict.add_training_data(S);
     }
 
-    std::basic_string<uint8_t> dict_bytes = dict.build_dict(1 << 17);
+    std::basic_string<uint8_t> dict_bytes = dict.build_dict(1 << 16);
     std::cout << "dict length in bytes: " << dict_bytes.size() << std::endl;
 
-    std::basic_string<uint8_t> dict_lz = LZ_compressor::compress(dict_bytes, 4);
+    std::basic_string<uint8_t> dict_lz = LZ_compressor::compress(dict_bytes, {}, 4);
     std::cout << "dict length after lz compression: " << dict_lz.size() << std::endl;
 
     std::string dict_base64 = td::base64_encode(

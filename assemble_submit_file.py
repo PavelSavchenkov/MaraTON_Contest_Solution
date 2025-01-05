@@ -25,7 +25,16 @@ def dfs(filename):
             if to_filename not in was:
                 ans += dfs(to_filename)
         else:
-            ans += line
+            compressed_line = ""
+            in_str = False
+            for i in range(len(line)):
+                if line[i] == '\"':
+                    in_str = True
+                if line[i] == '/' and i + 1 < len(line) and line[i + 1] == '/' and not in_str:
+                    break
+                else:
+                    compressed_line += line[i]
+            ans += compressed_line
     return ans
 
 
