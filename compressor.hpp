@@ -241,7 +241,11 @@ struct CompressionPrecalc {
     }
 } MEM;
 
-std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data, unsigned MIN_MATCH_LENGTH, bool clear_mem = true) {
+std::basic_string<uint8_t> compress(
+    const std::basic_string<uint8_t> &data,
+    unsigned MIN_MATCH_LENGTH,
+    bool clear_mem = true
+) {
     CHECK(MATCH_OFFSET <= MIN_MATCH_LENGTH);
 
     if (MEM.empty()) {
@@ -294,6 +298,9 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data, unsi
         }
     };
     uint8_t bytes_for_index = 1;
+    double sum_match_offset = 0;
+    double sum_match_offset_sq = 0;
+    unsigned cnt_match_offset = 0;
     for (unsigned i = 0; i < MEM.n;) {
         if (i >= (1u << (8 * bytes_for_index)) && bytes_for_index < MAX_BYTES_FOR_INDEX) {
             ++bytes_for_index;
@@ -311,7 +318,12 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data, unsi
                 CHECK(data[j + it] == data[i + it]);
             }
 
-            push_as_bytes(out, i - j, bytes_for_index);
+            const unsigned offset = i - j;
+            sum_match_offset_sq += offset * 1ull * offset;
+            sum_match_offset += offset;
+            cnt_match_offset += 1;
+
+            push_as_bytes(out, offset, bytes_for_index);
             i += MEM.best_len[i];
         } else {
             literal_buf.push_back(data[i]);
@@ -324,6 +336,15 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &data, unsi
 
     if (clear_mem) {
         MEM = CompressionPrecalc();
+    }
+
+    // debug
+    {
+        const double avg = sum_match_offset / cnt_match_offset;
+        const double avg_sq = sum_match_offset_sq / cnt_match_offset;
+        std::cout << "avg match offset = " << avg
+                << ", stddev match offset = " << std::sqrt((avg_sq) - (avg * avg))
+                << ", cnt_match_offset = " << cnt_match_offset << std::endl;
     }
     return out;
 }
