@@ -64,10 +64,14 @@ td::Ref<vm::Cell> read_from_filepath_to_root_cell(const std::string &block_path)
     return root;
 }
 
+uint8_t len_in_bits(const uint64_t num) {
+    const auto zeros = td::count_leading_zeroes64(num);
+    return std::max(1, 64 - zeros);
+}
+
 uint8_t len_in_bytes(const uint64_t num) {
-    auto zeros = td::count_leading_zeroes64(num);
-    auto taken = 64 - zeros;
-    return std::max(1, (taken + 7) / 8);
+    const auto bits = len_in_bits(num);
+    return (bits + 7) / 8;
 }
 
 void push_as_bytes(std::basic_string<uint8_t> &data, uint64_t number, uint8_t bytes) {

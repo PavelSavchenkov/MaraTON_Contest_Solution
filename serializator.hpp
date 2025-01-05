@@ -524,13 +524,13 @@ std::string compress(
     if (return_after_serialize) {
         return to_string(S);
     }
-    std::basic_string<uint8_t> best_S;
-    for (unsigned min_match_len = 4; min_match_len <= 8; ++min_match_len) {
-        auto cur = LZ_compressor::compress(S, min_match_len, false);
-        if (best_S.empty() || cur.size() < best_S.size()) {
-            best_S = cur;
-        }
-    }
+    std::basic_string<uint8_t> best_S = LZ_compressor::compress(S, 4, false);
+    // for (unsigned min_match_len = 4; min_match_len <= 8; ++min_match_len) {
+    //     auto cur = LZ_compressor::compress(S, min_match_len, false);
+    //     if (best_S.empty() || cur.size() < best_S.size()) {
+    //         best_S = cur;
+    //     }
+    // }
     LZ_compressor::MEM = LZ_compressor::CompressionPrecalc();
     CHECK(!best_S.empty());
     S = best_S;

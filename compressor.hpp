@@ -5,20 +5,15 @@
 #include <string>
 #include <td/utils/check.h>
 
+#include "utils.h"
+
 namespace LZ_compressor {
-static const uint8_t MAX_BYTES_FOR_INDEX = 2;
+static const uint8_t MAX_BYTES_FOR_INDEX = 3;
 static const unsigned MATCH_OFFSET = 4;
 static const uint8_t LITERAL_NIBBLE_BITS = 6;
 static const auto MATCH_NIBBLE_BITS = 8 - LITERAL_NIBBLE_BITS;
 
 std::vector<unsigned> build_suff_arr(const std::basic_string<uint8_t> &s) {
-    // std::vector<unsigned> s(s_.size() + 1);
-    // for (unsigned i = 0; i < s_.size(); ++i) {
-    //     s[i] = s_[i];
-    //     ++s[i];
-    // }
-    // s.back() = 0;
-
     const unsigned n = s.size();
     std::vector<unsigned> p(n);
 
@@ -74,17 +69,6 @@ std::vector<unsigned> build_suff_arr(const std::basic_string<uint8_t> &s) {
         }
         c = nc;
     }
-
-    // // remove last zero
-    // {
-    //     std::vector<unsigned> np;
-    //     for (unsigned i = 0; i < n; ++i) {
-    //         if (p[i] != n - 1) {
-    //             np.push_back(p[i]);
-    //         }
-    //     }
-    //     p = np;
-    // }
 
     return p;
 }
@@ -168,13 +152,6 @@ struct CompressionPrecalc {
         std::map<uint64_t, unsigned> map_pref;
         auto make_alive = [&](unsigned i) {
             alive_pos.insert(pos[i]);
-            // if (i + MIN_MATCH_LENGTH <= n) {
-            //     uint64_t key = 0;
-            //     for (unsigned j = 0; j < MIN_MATCH_LENGTH; ++j) {
-            //         key = (key << 8) ^ data[i + j];
-            //     }
-            //     map_pref[key] = i;
-            // }
         };
         best_prev.resize(n);
         best_len.resize(n);
@@ -213,25 +190,6 @@ struct CompressionPrecalc {
                 }
             }
 
-            // // check the last occurence of suff
-            // // OVERWRITE suff arr search
-            // {
-            //     best_len = 0;
-            //     best_prev = -1u;
-            //     if (i + MIN_MATCH_LENGTH <= n) {
-            //         uint64_t key = 0;
-            //         for (unsigned j = 0; j < MIN_MATCH_LENGTH; ++j) {
-            //             key = (key << 8) ^ data[i + j];
-            //         }
-            //         if (map_pref.count(key)) {
-            //             best_prev = map_pref[key];
-            //             if (len_in_bytes(i - best_prev) <= MAX_BYTES_FOR_INDEX) {
-            //                 best_len = get_lcp(best_prev, i);
-            //             }
-            //         }
-            //     }
-            // }
-
             make_alive(i++);
         }
     }
@@ -246,6 +204,7 @@ std::basic_string<uint8_t> compress(
     unsigned MIN_MATCH_LENGTH,
     bool clear_mem = true
 ) {
+    CHECK(!data.empty());
     CHECK(MATCH_OFFSET <= MIN_MATCH_LENGTH);
 
     if (MEM.empty()) {
@@ -254,14 +213,52 @@ std::basic_string<uint8_t> compress(
     CHECK(!MEM.empty());
     CHECK(MEM.n == data.size());
 
-    std::basic_string<uint8_t> out;
+    // encoded size is at most data size ??
+    std::basic_string<uint8_t> out_vector(2 << 20, 0);
+    td::BitPtr out(out_vector.data(), 0);
+    const auto store_uint = [&](unsigned x, unsigned bits) {
+        out.store_uint(x, bits);
+        out.offs += bits;
+    };
+
+    // number of bits to store offset size
+    auto bits_for_offset = static_cast<uint8_t>(-1u);
+    // minimal offset size. e.g. x in "bits for offset" field means the offset takes "x + min_bits_for_offset" bits
+    auto min_bits_for_offset = static_cast<uint8_t>(-1u);
+    {
+        // offset size can be up to data.size()-1
+        const uint8_t bits_for_max_offset = len_in_bits(data.size() - 1); // e.g. 20
+        bits_for_offset = len_in_bits(bits_for_max_offset); // e.g. 5
+        min_bits_for_offset = 0;
+        while (bits_for_offset > 4) {
+            ++min_bits_for_offset;
+            bits_for_offset = len_in_bits(bits_for_max_offset - min_bits_for_offset);
+        }
+    }
+
+    // store both constants in out buf
+    {
+        CHECK(bits_for_offset <= 4);
+        CHECK(min_bits_for_offset <= 15);
+        uint8_t byte = (bits_for_offset << 4) ^ min_bits_for_offset;
+        store_uint(byte, 8);
+    }
+
+    const auto push_offset = [&](unsigned offset) {
+        const uint8_t offset_bit_length = std::max(min_bits_for_offset, len_in_bits(offset));
+        store_uint(offset_bit_length - min_bits_for_offset, bits_for_offset);
+        store_uint(offset, offset_bit_length);
+    };
+
     std::basic_string<uint8_t> literal_buf;
+    std::basic_string<uint8_t> all_literals;
     auto dump_int_number_per_255 = [&](unsigned number) -> void {
         while (1) {
             unsigned cur = std::min(number, 255u);
             number -= cur;
-            out.push_back(cur);
+            store_uint(cur, 8);
             if (cur < 255) {
+                CHECK(number == 0);
                 break;
             }
         }
@@ -284,23 +281,21 @@ std::basic_string<uint8_t> compress(
         match_length -= match_nibble;
         token ^= match_nibble;
 
-        out.push_back(token);
+        store_uint(token, 8);
 
         if (literal_nibble == (1u << LITERAL_NIBBLE_BITS) - 1) {
             dump_int_number_per_255(literal_length);
         }
 
-        out += literal_buf;
+        all_literals += literal_buf;
         literal_buf.clear();
 
         if (match_nibble == (1u << MATCH_NIBBLE_BITS) - 1) {
             dump_int_number_per_255(match_length);
         }
     };
+
     uint8_t bytes_for_index = 1;
-    double sum_match_offset = 0;
-    double sum_match_offset_sq = 0;
-    unsigned cnt_match_offset = 0;
     for (unsigned i = 0; i < MEM.n;) {
         if (i >= (1u << (8 * bytes_for_index)) && bytes_for_index < MAX_BYTES_FOR_INDEX) {
             ++bytes_for_index;
@@ -310,7 +305,7 @@ std::basic_string<uint8_t> compress(
             dump_tokens_and_literal(MEM.best_len[i]);
 
             // dump match offset
-            unsigned j = MEM.best_prev[i];
+            const unsigned j = MEM.best_prev[i];
             CHECK(j < i);
             CHECK(len_in_bytes(i - j) <= MAX_BYTES_FOR_INDEX);
 
@@ -319,34 +314,30 @@ std::basic_string<uint8_t> compress(
             }
 
             const unsigned offset = i - j;
-            sum_match_offset_sq += offset * 1ull * offset;
-            sum_match_offset += offset;
-            cnt_match_offset += 1;
-
-            push_as_bytes(out, offset, bytes_for_index);
+            push_offset(offset);
             i += MEM.best_len[i];
         } else {
             literal_buf.push_back(data[i]);
             ++i;
         }
     }
-    if (!literal_buf.empty()) {
-        dump_tokens_and_literal(-1u);
-    }
+    // if (!literal_buf.empty()) {
+    //     dump_tokens_and_literal(-1u);
+    // }
+    // TODO: think more
+    dump_tokens_and_literal(-1u);
 
     if (clear_mem) {
         MEM = CompressionPrecalc();
     }
 
-    // debug
-    {
-        const double avg = sum_match_offset / cnt_match_offset;
-        const double avg_sq = sum_match_offset_sq / cnt_match_offset;
-        std::cout << "avg match offset = " << avg
-                << ", stddev match offset = " << std::sqrt((avg_sq) - (avg * avg))
-                << ", cnt_match_offset = " << cnt_match_offset << std::endl;
+    for (const auto& byte : all_literals) {
+        store_uint(byte, 8);
     }
-    return out;
+    store_uint(1, 1);
+
+    const unsigned len_in_bytes = (out.offs + 7) / 8;
+    return {out.ptr, len_in_bytes};
 }
 
 std::basic_string<uint8_t> decompress_standard(const std::basic_string<uint8_t> &data) {
@@ -357,60 +348,102 @@ std::basic_string<uint8_t> decompress_standard(const std::basic_string<uint8_t> 
     return {reinterpret_cast<const uint8_t *>(res.data()), res.size()};
 }
 
-std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
-    std::basic_string<uint8_t> out;
-    uint8_t bytes_for_index = 1;
-    for (unsigned i = 0; i < data.size();) {
-        uint8_t token = data[i++];
+struct Token {
+    unsigned literal_length{-1u};
+    unsigned offset{-1u};
+    unsigned match_length{-1u};
+};
 
-        unsigned literal_length = token >> MATCH_NIBBLE_BITS;
-        if (literal_length == (1u << LITERAL_NIBBLE_BITS) - 1) {
-            while (1) {
-                literal_length += data[i];
-                if (data[i++] < 255) {
-                    break;
-                }
-            }
-        }
-        // read literals
-        while (literal_length > 0) {
-            --literal_length;
-            CHECK(i < data.size());
-            out += data[i++];
-        }
-        // read match length
-        unsigned match_length = token & ((1u << MATCH_NIBBLE_BITS) - 1);
-        if (match_length == (1u << MATCH_NIBBLE_BITS) - 1) {
-            while (true) {
-                match_length += data[i];
-                if (data[i++] < 255) {
-                    break;
-                }
-            }
-        }
-        // read offset
-        if (i == data.size()) {
-            CHECK(match_length == 0);
+std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
+    CHECK(!data.empty());
+    unsigned data_len_bits = data.size() * 8;
+    CHECK(data.back() != 0);
+    for (uint8_t tail = 0; tail < 8; ++tail) {
+        if ((data.back() >> tail) & 1) {
+            data_len_bits -= tail + 1;
             break;
         }
-        match_length += MATCH_OFFSET;
+    }
 
-        if (out.size() >= (1u << (8 * bytes_for_index)) && bytes_for_index < MAX_BYTES_FOR_INDEX) {
-            ++bytes_for_index;
+    td::ConstBitPtr data_bits(data.data(), 0);
+    const auto get_uint = [&](unsigned bits) {
+        const unsigned res = data_bits.get_uint(bits);
+        data_bits.offs += static_cast<int>(bits);
+        return res;
+    };
+
+    // number of bits to store offset size
+    uint8_t bits_for_offset = get_uint(4);
+    // minimal offset size. e.g. x in "bits for offset" field means the offset takes "x + min_bits_for_offset" bits
+    uint8_t min_bits_for_offset = get_uint(4);
+
+    std::vector<Token> tokens;
+    unsigned sum_literals_length = 0;
+    while (1) {
+        Token token;
+        uint8_t byte = get_uint(8);
+
+        unsigned literal_length = byte >> MATCH_NIBBLE_BITS;
+        if (literal_length == (1u << LITERAL_NIBBLE_BITS) - 1) {
+            while (true) {
+                const uint8_t cur = get_uint(8);
+                literal_length += cur;
+                if (cur < 255) {
+                    break;
+                }
+            }
+        }
+        sum_literals_length += literal_length;
+        token.literal_length = literal_length;
+
+        // read match length
+        unsigned match_length = byte & ((1u << MATCH_NIBBLE_BITS) - 1);
+        if (match_length == (1u << MATCH_NIBBLE_BITS) - 1) {
+            while (true) {
+                const uint8_t cur = get_uint(8);
+                match_length += cur;
+                if (cur < 255) {
+                    break;
+                }
+            }
+        }
+        token.match_length = match_length;
+
+        // read offset
+        if (sum_literals_length * 8 + data_bits.offs >= data_len_bits) {
+            CHECK(sum_literals_length * 8 + data_bits.offs == data_len_bits);
+            CHECK(match_length == 0);
+            tokens.push_back(token);
+            break;
+        }
+        token.match_length += MATCH_OFFSET;
+
+        unsigned offset_bit_length = get_uint(bits_for_offset);
+        offset_bit_length += min_bits_for_offset;
+        unsigned offset = get_uint(offset_bit_length);
+        token.offset = offset;
+
+        tokens.push_back(token);
+    }
+
+    std::basic_string<uint8_t> out;
+    for (const auto& token : tokens) {
+        // read literal
+        CHECK(token.literal_length != -1u);
+        for (unsigned it = 0; it < token.literal_length; ++it) {
+            out += static_cast<uint8_t>(get_uint(8));
         }
 
-        unsigned offset = 0;
-        for (unsigned it = 0; it < bytes_for_index; ++it) {
-            offset = (offset << 8) ^ data[i++];
-        }
-        CHECK(out.size() >= offset);
-        unsigned j = out.size() - offset;
-        for (unsigned it = 0; it < match_length; ++it) {
-            const auto byte = out[j];
-            out.push_back(byte);
-            ++j;
+        // read match
+        if (token.offset != -1u) {
+            const unsigned start_index = out.size() - token.offset;
+            for (unsigned it = 0; it < token.match_length; ++it) {
+                const uint8_t ch = out[start_index + it];
+                out += ch;
+            }
         }
     }
+
     return out;
 }
 };
