@@ -192,7 +192,9 @@ std::basic_string<uint8_t> compress(
     // number of bits to store offset size
     auto bits_for_offset = static_cast<uint8_t>(-1u);
     // minimal offset size. e.g. x in "bits for offset" field means the offset takes "x + min_bits_for_offset" bits
-    auto min_bits_for_offset = static_cast<uint8_t>(-1u); {
+    auto min_bits_for_offset = static_cast<uint8_t>(-1u);
+    // calculate above constants
+    {
         // offset size can be up to data.size()-1
         const uint8_t bits_for_max_offset = len_in_bits(data.size() - 1); // e.g. 20
         bits_for_offset = len_in_bits(bits_for_max_offset); // e.g. 5
@@ -294,13 +296,16 @@ std::basic_string<uint8_t> compress(
     if (clear_mem) {
         MEM = CompressionPrecalc();
     }
+    while (out.offs % 8 != 0) {
+        store_uint(0, 1);
+    }
 
     for (const auto &byte: all_literals) {
         store_uint(byte, 8);
     }
-    store_uint(1, 1);
 
-    const unsigned len_in_bytes = (out.offs + 7) / 8;
+    CHECK(out.offs % 8 == 0);
+    const unsigned len_in_bytes = out.offs / 8;
     return {out.ptr, len_in_bytes};
 }
 
@@ -326,15 +331,7 @@ std::basic_string<uint8_t> decompress(
         return {};
     }
 
-    unsigned data_len_bits = data.size() * 8;
-    CHECK(data.back() != 0);
-    for (uint8_t tail = 0; tail < 8; ++tail) {
-        if ((data.back() >> tail) & 1) {
-            data_len_bits -= tail + 1;
-            break;
-        }
-    }
-
+    const unsigned data_len_bytes = data.size();
     td::ConstBitPtr data_bits(data.data(), 0);
     const auto get_uint = [&](unsigned bits) {
         const unsigned res = data_bits.get_uint(bits);
@@ -380,8 +377,12 @@ std::basic_string<uint8_t> decompress(
         token.match_length = match_length;
 
         // read offset
-        if (sum_literals_length * 8 + data_bits.offs >= data_len_bits) {
-            CHECK(sum_literals_length * 8 + data_bits.offs == data_len_bits);
+        const unsigned bytes_processed = (data_bits.offs + 7) / 8;
+        if (sum_literals_length + bytes_processed >= data_len_bytes) {
+            // std::cout << "bytes_processed = " << bytes_processed << std::endl;
+            // std::cout << "sum_literals_length + bytes_processed = " << sum_literals_length + bytes_processed << std::endl;
+            // std::cout << "data_len_bytes = " << data_len_bytes << std::endl;
+            CHECK(sum_literals_length + bytes_processed == data_len_bytes);
             CHECK(match_length == 0);
             tokens.push_back(token);
             break;
@@ -394,6 +395,10 @@ std::basic_string<uint8_t> decompress(
         token.offset = offset;
 
         tokens.push_back(token);
+    }
+
+    while (data_bits.offs % 8 != 0) {
+        ++data_bits.offs;
     }
 
     std::basic_string<uint8_t> out = dict;
