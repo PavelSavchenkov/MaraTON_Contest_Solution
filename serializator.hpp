@@ -303,6 +303,11 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
     bytes += bytes_data;
     std::reverse(std::begin(bytes_d2), std::end(bytes_d2));
     bytes += bytes_d2;
+
+    // for (unsigned i = bytes.size() - 1; i > 0; --i) {
+    //     bytes[i] ^= bytes[i - 1];
+    // }
+
     return bytes;
 }
 
@@ -311,8 +316,12 @@ td::BufferSlice serialize_slice(td::Ref<vm::Cell> root) {
     return td::BufferSlice(reinterpret_cast<const char *>(bytes.data()), bytes.size());
 }
 
-td::Ref<vm::Cell> deserialise(const std::basic_string<uint8_t> &buffer) {
+td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
     std::vector<Ptr<MyCell> > my_cells;
+
+    // for (unsigned i = 1; i < buffer.size(); ++i) {
+    //     buffer[i] ^= buffer[i - 1];
+    // }
 
     // build my_cells
     uint8_t bytes_for_index = 1;
@@ -502,24 +511,29 @@ td::Ref<vm::Cell> deserialise_slice(td::Slice buffer_slice) {
     return deserialise(buffer);
 }
 
-std::string compress(const std::string &base64_data, bool return_before_huffman = false) {
+std::string compress(
+    const std::string &base64_data,
+    bool return_before_huffman = false,
+    bool return_after_serialize = false
+) {
     CHECK(!base64_data.empty());
     td::BufferSlice data(td::base64_decode(base64_data).move_as_ok());
     td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
 
     auto S = serialize(root);
-    {
-        std::basic_string<uint8_t> best_S;
-        for (unsigned min_match_len = 4; min_match_len <= 8; ++min_match_len) {
-            auto cur = LZ_compressor::compress(S, min_match_len, false);
-            if (best_S.empty() || cur.size() < best_S.size()) {
-                best_S = cur;
-            }
-        }
-        LZ_compressor::MEM = LZ_compressor::CompressionPrecalc();
-        CHECK(!best_S.empty());
-        S = best_S;
+    if (return_after_serialize) {
+        return to_string(S);
     }
+    std::basic_string<uint8_t> best_S;
+    for (unsigned min_match_len = 4; min_match_len <= 8; ++min_match_len) {
+        auto cur = LZ_compressor::compress(S, min_match_len, false);
+        if (best_S.empty() || cur.size() < best_S.size()) {
+            best_S = cur;
+        }
+    }
+    LZ_compressor::MEM = LZ_compressor::CompressionPrecalc();
+    CHECK(!best_S.empty());
+    S = best_S;
     // S = LZ_compressor::compress_standard(S);
 
     if (return_before_huffman) {
@@ -531,25 +545,13 @@ std::string compress(const std::string &base64_data, bool return_before_huffman 
 }
 
 std::string decompress(const std::string &base64_data) {
-    CHECK(!base64_data.empty()); {
-        std::string data = td::base64_decode(base64_data).move_as_ok();
-        std::basic_string<uint8_t> S(data.begin(), data.end());
-        S = huffman::decode_8(S);
-        S = LZ_compressor::decompress(S);
-        // S = LZ_compressor::decompress_standard(S);
-        td::Ref<vm::Cell> root = deserialise(S);
-        td::BufferSlice serialised_properly = vm::std_boc_serialize(root, 31).move_as_ok();
-        return base64_encode(serialised_properly);
-    }
-
-    td::BufferSlice data(td::base64_decode(base64_data).move_as_ok());
-
-    data = td::lz4_decompress(data, 2 << 20).move_as_ok();
-
-    td::Ref<vm::Cell> root = deserialise_slice(data);
-
-    // td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
-
+    CHECK(!base64_data.empty());
+    std::string data = td::base64_decode(base64_data).move_as_ok();
+    std::basic_string<uint8_t> S(data.begin(), data.end());
+    S = huffman::decode_8(S);
+    S = LZ_compressor::decompress(S);
+    // S = LZ_compressor::decompress_standard(S);
+    td::Ref<vm::Cell> root = deserialise(S);
     td::BufferSlice serialised_properly = vm::std_boc_serialize(root, 31).move_as_ok();
     return base64_encode(serialised_properly);
 }

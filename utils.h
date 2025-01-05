@@ -11,8 +11,8 @@ using CellType = vm::CellTraits::SpecialType;
 template<typename T>
 using Ptr = std::shared_ptr<T>;
 
-std::string to_string(const std::basic_string<uint8_t>& bytes) {
-    return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+std::string to_string(const std::basic_string<uint8_t> &bytes) {
+    return {reinterpret_cast<const char *>(bytes.data()), bytes.size()};
 }
 
 td::uint8 cell_type_to_int(const CellType &type) {
@@ -80,4 +80,29 @@ void push_as_bytes(std::basic_string<uint8_t> &data, uint64_t number, uint8_t by
     CHECK(number == 0);
     std::reverse(tmp.begin(), tmp.end());
     data += tmp;
+}
+
+unsigned cnt_occurrences(const std::basic_string<uint8_t> &sample, const std::basic_string<uint8_t> &text) {
+    const auto s = sample + text;
+    const unsigned n = s.size();
+    std::vector<unsigned> z(n);
+    unsigned l = 0;
+    unsigned r = 0;
+    unsigned cnt = 0;
+    for (unsigned i = 1; i < n; i++) {
+        if (i < r) {
+            z[i] = std::min(r - i, z[i - l]);
+        }
+        while (i + z[i] < n && s[z[i]] == s[i + z[i]]) {
+            ++z[i];
+        }
+        if (i + z[i] > r) {
+            l = i;
+            r = i + z[i];
+        }
+        if (i >= sample.size() && z[i] >= sample.size()) {
+            ++cnt;
+        }
+    }
+    return cnt;
 }

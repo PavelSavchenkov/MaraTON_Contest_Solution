@@ -7,6 +7,7 @@
 #include "td/utils/base64.h"
 #include "vm/boc.h"
 
+#include "dictionary.hpp"
 #include "utils.h"
 #include "compressor.hpp"
 #include "huffman.hpp"
