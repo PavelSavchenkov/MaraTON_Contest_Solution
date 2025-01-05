@@ -114,6 +114,7 @@ std::basic_string<uint8_t> compress(
     const std::basic_string<uint8_t> &dict
 ) {
     CHECK(!data_.empty());
+    // std::cout << "dict.size()=" << dict.size() << std::endl;
 
     const auto data = dict + data_;
 
@@ -191,7 +192,7 @@ std::basic_string<uint8_t> compress(
         return res;
     };
 
-    Timer* timer = new Timer("best_suff and best_len");
+    // Timer* timer = new Timer("best_suff and best_len");
     static unsigned best_len[MAX_LOGN + 1][MAXN];
     static unsigned best_suff[MAX_LOGN + 1][MAXN];
     memset (best_len, 0, sizeof (best_len));
@@ -250,7 +251,7 @@ std::basic_string<uint8_t> compress(
             }
         }
     }
-    delete timer;
+    // delete timer;
 
     // calculate dp and then encode
     const auto how_many_bits_to_encode_match = [&](unsigned offset, unsigned len) {
