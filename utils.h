@@ -64,17 +64,17 @@ td::Ref<vm::Cell> read_from_filepath_to_root_cell(const std::string &block_path)
     return root;
 }
 
-uint8_t len_in_bits(const uint64_t num) {
+inline uint8_t len_in_bits(const uint64_t num) {
     const auto zeros = td::count_leading_zeroes64(num);
     return std::max(1, 64 - zeros);
 }
 
-uint8_t len_in_bytes(const uint64_t num) {
+inline uint8_t len_in_bytes(const uint64_t num) {
     const auto bits = len_in_bits(num);
     return (bits + 7) / 8;
 }
 
-void push_as_bytes(std::basic_string<uint8_t> &data, uint64_t number, uint8_t bytes) {
+inline void push_as_bytes(std::basic_string<uint8_t> &data, uint64_t number, uint8_t bytes) {
     CHECK(bytes > 0);
     std::basic_string<uint8_t> tmp;
     for (uint8_t i = 0; i < bytes; i++) {
@@ -110,3 +110,16 @@ unsigned cnt_occurrences(const std::basic_string<uint8_t> &sample, const std::ba
     }
     return cnt;
 }
+
+struct Timer {
+    double start_time{};
+    std::string name;
+
+    explicit Timer(const std::string &name) : name(name) {
+        start_time = clock() * 1.0 / CLOCKS_PER_SEC;
+    }
+
+    ~Timer() {
+        std::cout << name << ", Time: " << (clock() * 1.0 / CLOCKS_PER_SEC - start_time) << std::endl;
+    }
+};
