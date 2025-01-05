@@ -50,7 +50,7 @@ int main() {
 
     // output compressed dict
     {
-        std::ofstream outfile("dict_base64.txt");
+        std::ofstream outfile("dicts/dict_base64.txt");
         outfile << dict_base64;
     }
 }
