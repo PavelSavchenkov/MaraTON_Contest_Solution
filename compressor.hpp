@@ -12,16 +12,13 @@ static const unsigned MATCH_LENGHT_OFFSET = 4;
 static const uint8_t LITERAL_NIBBLE_BITS = 6;
 static const uint8_t MATCH_NIBBLE_BITS = 8 - LITERAL_NIBBLE_BITS;
 
-static const unsigned MAX_LOGN = 21;
-static const unsigned MAXN = 1 << MAX_LOGN;
-
 namespace SparseTableMin {
-static unsigned min[MAX_LOGN + 1][MAXN];
+std::vector<std::vector<unsigned>> min;
 
 void build(const std::vector<unsigned> &values) {
     const unsigned n = values.size();
     const unsigned logn = len_in_bits(n);
-    memset(min, -1, sizeof min);
+    min.assign(logn + 1, std::vector<unsigned>(n));
 
     for (unsigned i = 0; i < n; ++i) {
         min[0][i] = values[i];
@@ -114,7 +111,6 @@ std::basic_string<uint8_t> compress(
     const std::basic_string<uint8_t> &dict
 ) {
     CHECK(!data_.empty());
-    // std::cout << "dict.size()=" << dict.size() << std::endl;
 
     const auto data = dict + data_;
 
@@ -155,7 +151,6 @@ std::basic_string<uint8_t> compress(
     std::vector<unsigned> p{};
     std::vector<unsigned> pos{};
     const unsigned n = data.size();
-    const unsigned logn = len_in_bits(n);
 
     // sort cyclic shifts
     p = build_suff_arr(data);
@@ -183,6 +178,15 @@ std::basic_string<uint8_t> compress(
             --lcp_len;
         }
     }
+    const auto get_lcp_loop = [&](unsigned j, unsigned i) -> unsigned {
+        j = p[j];
+        i = p[i];
+        unsigned len = 0;
+        while (i + len < n && j + len < n && data[i + len] == data[j + len]) {
+            ++len;
+        }
+        return len;
+    };
     SparseTableMin::build(lcp);
     const auto get_lcp_fast = [&](unsigned j, unsigned i) -> unsigned {
         if (i > j) {
@@ -192,157 +196,57 @@ std::basic_string<uint8_t> compress(
         return res;
     };
 
-    // Timer* timer = new Timer("best_suff and best_len");
-    static unsigned best_len[MAX_LOGN + 1][MAXN];
-    static unsigned best_suff[MAX_LOGN + 1][MAXN];
-    memset (best_len, 0, sizeof (best_len));
-    memset (best_suff, -1, sizeof (best_suff));
-    static std::set<unsigned> alive_on_dist[MAX_LOGN + 1];
-    for (unsigned i = 0; i <= MAX_LOGN; ++i) {
-        alive_on_dist[i].clear();
-    }
+    std::vector<unsigned> best_len(n + 1, 0);
+    std::vector<unsigned> best_offset(n, -1u);
+    std::set<unsigned> alive;
+    const unsigned ITERS = n > (1 << 16) ? 10 : 50;
     for (unsigned i = 0; i < n; ++i) {
-        // rearrange prev indexes
-        for (unsigned hb = 1; hb <= logn; ++hb) {
-            const unsigned offset = 1u << hb;
-            // i - offset >= 0
-            if (i >= offset) {
-                const unsigned j = i - offset;
-                const unsigned pj = pos[j];
-                // CHECK(alive_on_dist[hb - 1].count(pj));
-                alive_on_dist[hb - 1].erase(pj);
-                alive_on_dist[hb].insert(pj);
-            } else {
-                break;
-            }
-        }
-        // insert i-1
         if (i > 0) {
-            alive_on_dist[0].insert(pos[i - 1]);
+            alive.insert(pos[i - 1]);
+        }
+        if (i < dict.size()) {
+            continue;
         }
 
         const unsigned pos_i = pos[i];
-        for (unsigned hb = 0; hb <= logn; ++hb) {
-            const auto &S = alive_on_dist[hb];
-            if (S.empty()) {
-                continue;
-            }
-
-            // to the left and to the right in suff arr
-            for (unsigned phase = 0; phase < 2; ++phase) {
-                auto it = S.upper_bound(pos[i]);
+        // to the left and to the right in suff arr
+        for (unsigned phase = 0; phase < 2; ++phase) {
+            auto it = alive.upper_bound(pos[i]);
+            for (unsigned iter = 0; iter < ITERS; ++iter) {
                 if (phase == 1) {
-                    if (it != S.begin()) {
+                    if (it != alive.begin()) {
                         --it;
+                    } else {
+                        break;
                     }
                 }
-                if (it == S.end()) {
-                    continue;
+                if (it == alive.end()) {
+                    break;
                 }
                 const auto len = get_lcp_fast(*it, pos_i);
-                if (len >= MATCH_LENGHT_OFFSET && len > best_len[hb][i]) {
+                if (len >= MATCH_LENGHT_OFFSET) {
                     const unsigned j = p[*it];
                     CHECK(j < i);
                     const unsigned offset = i - j;
-                    // CHECK(len_in_bits(offset) - 1 == hb);
-                    best_suff[hb][i] = j;
-                    best_len[hb][i] = len;
+                    if (len > best_len[i] || (len == best_len[i] && offset < best_offset[i])) {
+                        best_offset[i] = offset;
+                        best_len[i] = len;
+                    }
+                }
+                if (phase == 0) {
+                    ++it;
                 }
             }
         }
     }
-    // delete timer;
 
-    // calculate dp and then encode
-    const auto how_many_bits_to_encode_match = [&](unsigned offset, unsigned len) {
-        unsigned bits = MATCH_NIBBLE_BITS; // in token
-        CHECK(len != -1u);
-        if (len == 0) {
-            return bits;
-        }
-        CHECK(len >= MATCH_LENGHT_OFFSET);
-        len -= MATCH_LENGHT_OFFSET;
-        if (len >= ((1u << MATCH_NIBBLE_BITS) - 1)) {
-            const unsigned rest = len - ((1u << MATCH_NIBBLE_BITS) - 1);
-            CHECK(rest <= n);
-            bits += (rest + 255) / 255 * 8;
-        }
-        bits += bits_for_offset;
-        bits += std::max(min_bits_for_offset, len_in_bits(offset));
-        return bits;
-    };
-    const auto how_many_bits_to_encode_literal = [&](unsigned len) {
-        unsigned bits = LITERAL_NIBBLE_BITS;
-        if (len >= ((1u << LITERAL_NIBBLE_BITS) - 1)) {
-            const unsigned rest = len - ((1u << LITERAL_NIBBLE_BITS) - 1);
-            CHECK(rest <= n);
-            bits += (rest + 255) / 255 * 8;
-        }
-        bits += len * 8;
-        return bits;
-    };
-    const auto how_many_bits_to_encode = [&](unsigned offset, unsigned match_length, unsigned literal_length) {
-        return how_many_bits_to_encode_literal(literal_length) +
-               how_many_bits_to_encode_match(offset, match_length);
-    };
     const auto push_offset = [&](unsigned offset) {
         const uint8_t offset_bit_length = std::max(min_bits_for_offset, len_in_bits(offset));
         store_uint(offset_bit_length - min_bits_for_offset, bits_for_offset);
         store_uint(offset, offset_bit_length);
     };
 
-    // calculate dp[i] = minimum number of bits to encode prefix of length i, for i >= dict.size()
-    std::vector<unsigned> next_with_match(n, n);
-    for (unsigned it = 0; it < n; ++it) {
-        const unsigned i = n - it - 1;
-        if (i + 1 < n) {
-            next_with_match[i] = next_with_match[i + 1];
-        }
-        for (unsigned j = 0; j <= logn; ++j) {
-            if (best_len[j][i] >= MATCH_LENGHT_OFFSET) {
-                next_with_match[i] = i;
-                break;
-            }
-        }
-        if (i == dict.size()) {
-            break;
-        }
-    }
-    std::vector<unsigned> dp(n + 1, -1u);
-    std::vector<unsigned> best_literal_len(n + 1, -1u);
-    std::vector<unsigned> best_offset(n + 1, -1u);
-    std::vector<unsigned> best_i(n + 1, -1u);
-    dp[dict.size()] = 0;
-    const auto relax_dp = [&](unsigned j, unsigned i, unsigned literal_len, unsigned offset) {
-        const unsigned len = j - i;
-        CHECK(literal_len <= len);
-        CHECK(len <= n);
-        unsigned match_len = len - literal_len;
-        const unsigned new_dp = dp[i] + how_many_bits_to_encode(offset, match_len, literal_len);
-        if (new_dp < dp[j]) {
-            dp[j] = new_dp;
-            best_literal_len[j] = literal_len;
-            best_offset[j] = offset;
-            best_i[j] = i;
-        }
-    };
-    for (unsigned i = dict.size(); i < n; ++i) {
-        if (dp[i] == -1u) {
-            continue;
-        }
-        const unsigned j = next_with_match[i];
-        relax_dp(j, i, j - i, -1u);
-        for (unsigned hb = 0; hb <= logn; ++hb) {
-            if (best_len[hb][j] == -1u) {
-                continue;
-            }
-            const unsigned offset = j - best_suff[hb][j];
-            relax_dp(j + best_len[hb][j], i, j - i, offset);
-        }
-    }
-
-    // -------------------------
-    // actual encoding
+    //  encoding
     auto dump_int_number_per_255 = [&](unsigned number) -> void {
         while (true) {
             unsigned cur = std::min(number, 255u);
@@ -379,43 +283,27 @@ std::basic_string<uint8_t> compress(
             dump_int_number_per_255(match_len);
         }
     };
-
-    std::vector<unsigned> js;
-    // stack
-    {
-        unsigned j = n;
-        CHECK(dp[j] <= n * 8);
-        while (j != dict.size()) {
-            js.push_back(j);
-            CHECK(dp[j] <= n * 8);
-            j = best_i[j];
+    std::basic_string<uint8_t> literals;
+    for (unsigned i = dict.size(); i < n; ) {
+        unsigned j = i;
+        while (j < n && best_len[j] < MATCH_LENGHT_OFFSET) {
+            ++j;
         }
-        js.push_back(dict.size());
-        std::reverse(js.begin(), js.end());
-    }
-
-    std::basic_string<uint8_t> all_literals;
-    for (unsigned it = 0; it + 1 < js.size(); ++it) {
-        const unsigned i = js[it];
-        const unsigned nxt = js[it + 1];
-        const unsigned len = nxt - i;
-        const unsigned literal_len = best_literal_len[nxt];
-        const unsigned match_len = (len - literal_len);
-        const unsigned offset = best_offset[nxt];
-        all_literals += data.substr(i, literal_len);
+        const auto literal_len = j - i;
+        const auto match_len = best_len[j];
+        literals += data.substr(i, literal_len);
         dump_lengths(match_len, literal_len);
-        if (match_len > 0) {
-            push_offset(offset);
-        } else {
-            CHECK(it + 2 == js.size());
+        if (j < n) {
+            push_offset(best_offset[j]);
         }
+        i = j + best_len[j];
     }
 
     while (out.offs % 8 != 0) {
         store_uint(0, 1);
     }
 
-    for (const auto &byte: all_literals) {
+    for (const auto &byte: literals) {
         store_uint(byte, 8);
     }
     CHECK(out.offs % 8 == 0);
