@@ -5,305 +5,206 @@
 #include "utils.h"
 
 namespace huffman {
-static const uint8_t HUFFMAN_BITS = 8;
-static const unsigned HUFFMAN_SIZE = 1u << HUFFMAN_BITS;
-
-const std::array<unsigned, HUFFMAN_SIZE> CNT = {
-    4708742, 2690906, 1594044, 1498105, 1429774, 1274706, 1391122, 1203499, 1473717, 999887, 1024849, 1026920, 1290581,
-    966872, 860694, 733695, 906823, 707352, 679858, 678478, 730129, 657312, 702175, 672151, 875188, 735075, 695848,
-    685955, 683194, 616934, 623606, 626942, 893479, 630048, 623146, 592777, 610377, 566319, 596343, 575291, 915911,
-    585414, 568504, 567584, 591511, 565283, 558381, 565168, 806397, 685380, 657081, 629128, 644543, 606926, 622801,
-    607616, 680089, 617969, 570690, 537445, 574371, 537790, 585990, 607501, 1064192, 637180, 591856, 594272, 626022,
-    560337, 575176, 567239, 946625, 595077, 549408, 536179, 634419, 554470, 565283, 553089, 718510, 563673, 564938,
-    572185, 581043, 554470, 556195, 545497, 600714, 552054, 552974, 570690, 565513, 518579, 532843, 546072, 786381,
-    617164, 632349, 602900, 652940, 581158, 620155, 565858, 916026, 561257, 564133, 528587, 599449, 563558, 547338,
-    552054, 678478, 575866, 669620, 558381, 585299, 540781, 552054, 532843, 595192, 548143, 541241, 537330, 576557,
-    523065, 581733, 566204, 1009895, 734155, 646498, 658577, 644428, 594617, 572991, 587255, 948121, 597378, 566088,
-    555505, 617739, 568044, 562522, 563903, 741057, 567814, 582654, 585644, 554930, 543196, 541126, 536524, 630853,
-    550444, 561257, 557116, 574486, 548143, 558611, 569194, 903372, 645578, 609917, 581733, 603245, 561372, 589441,
-    581618, 873578, 561257, 548028, 541126, 574026, 553780, 544692, 556541, 634880, 590246, 581503, 546532, 565743,
-    524906, 540436, 535834, 595192, 575291, 548258, 521340, 557921, 603475, 681009, 587600, 1125966, 725643, 647764,
-    598068, 608306, 559877, 594387, 557806, 923043, 611182, 559071, 563443, 585990, 538250, 531923, 557806, 661338,
-    548833, 545037, 538710, 577362, 545497, 541586, 535719, 585875, 541931, 523870, 532728, 527897, 520880, 526861,
-    516738, 827104, 604395, 599679, 558611, 575751, 539630, 527322, 538595, 867941, 523640, 529622, 514438, 548603,
-    527667, 516278, 524676, 665019, 552514, 578282, 535719, 576557, 524331, 521685, 528932, 671461, 538020, 542276,
-    523525, 596113, 521800, 557116, 683079,
-};
-
+static const std::vector<unsigned> d1_freq = {4894, 6201, 36038, 1867, 121, 0, 0, 0, 14591, 6, 25, 0, 0, 0, 0, 0,};
 
 struct Node {
     Ptr<Node> left{};
     Ptr<Node> right{};
     unsigned freq{};
-    unsigned number{-1u};
-    unsigned min_number{-1u};
+    unsigned symbol{-1u};
+    unsigned min_symbol{-1u};
     unsigned min_depth{-1u};
 
-    explicit Node(unsigned number, unsigned freq) : number(number), freq(freq) {
-        min_number = number;
+    explicit Node(unsigned symbol, unsigned freq) : symbol(symbol), freq(freq) {
+        min_symbol = symbol;
         min_depth = 0;
     }
 
     explicit Node(Ptr<Node> left, Ptr<Node> right) : left(left), right(right) {
         freq = left->freq + right->freq;
-        min_number = std::min(min_number, left->min_number);
-        min_number = std::min(min_number, right->min_number);
+        min_symbol = std::min(min_symbol, left->min_symbol);
+        min_symbol = std::min(min_symbol, right->min_symbol);
         min_depth = std::min(left->min_depth, right->min_depth) + 1;
     }
 };
 
-Ptr<Node> build_tree(const std::array<unsigned, HUFFMAN_SIZE> &cnt) {
-    auto cmp = [&](const Ptr<Node> &a, const Ptr<Node> &b) {
-        if (a == b) {
-            return false;
-        }
-        if (a->freq != b->freq) {
-            return a->freq < b->freq;
-        }
-        if (a->min_depth != b->min_depth) {
-            return a->min_depth < b->min_depth;
-        }
-        CHECK(a->min_number != b->min_number);
-        return a->min_number < b->min_number;
-    };
+struct HuffmanEncoderDecoder {
+    // 0 ... n -> bitstrings
+    // (code, length)
+    std::vector<std::pair<uint64_t, uint8_t> > codes{};
+    Ptr<Node> root{};
 
-    std::set<Ptr<Node>, decltype(cmp)> nodes(cmp);
-    for (unsigned c = 0; c < HUFFMAN_SIZE; ++c) {
-        nodes.insert(std::make_shared<Node>(c, cnt[c]));
-    }
-    while (nodes.size() > 1) {
-        auto a = *nodes.begin();
-        nodes.erase(nodes.begin());
-        auto b = *nodes.begin();
-        nodes.erase(nodes.begin());
+    void encode_symbol(td::BitPtr &bit_ptr, const unsigned s) const {
+        // {
+        //     bit_ptr.store_uint(s, 4);
+        //     bit_ptr.offs += 4;
+        //     return;
+        // }
 
-        nodes.insert(std::make_shared<Node>(a, b));
-    }
-    const auto root = *nodes.begin();
-    return root;
-}
-
-std::vector<std::vector<uint8_t> > build_codes(Ptr<Node> root) {
-    std::vector<std::vector<uint8_t> > codes(HUFFMAN_SIZE);
-    auto dfs = [&](auto &&self, Ptr<Node> v, std::vector<uint8_t> &code) {
-        if (v->number != -1u) {
-            codes.at(v->number) = code;
-            return;
-        }
-
-        code.push_back(0);
-        self(self, v->left, code);
-        code.pop_back();
-
-        code.push_back(1);
-        self(self, v->right, code);
-        code.pop_back();
-    };
-
-    // build codes for each byte via dfs
-    {
-        std::vector<uint8_t> code;
-        dfs(dfs, root, code);
+        const auto &code = codes[s];
+        CHECK(code.second > 0);
+        bit_ptr.store_uint(code.first, code.second);
+        bit_ptr.offs += code.second;
     }
 
-    return codes;
-}
+    unsigned decode_symbol(td::BitPtr &bit_ptr) const {
+        // {
+        //     unsigned res = bit_ptr.get_uint(4);
+        //     bit_ptr.offs += 4;
+        //     return res;
+        // }
 
-void output_freq(const std::array<unsigned, HUFFMAN_SIZE> &cnt) {
-    auto &s = std::cout;
-    s << "const std::array<unsigned, HUFFMAN_SIZE> CNT = {\n";
-    for (const auto &c: cnt) {
-        s << c << ", ";
-    }
-    s << "\n};\n";
-}
+        CHECK(root);
+        Ptr<Node> v = root;
+        while (v->symbol == -1u) {
+            CHECK(v);
+            bool bit = bit_ptr.get_uint(1);
+            bit_ptr.offs += 1u;
 
-// Ptr<Node> ROOT{};
+            CHECK(v->left);
+            CHECK(v->right);
 
-std::basic_string<uint8_t> encode(const std::basic_string<uint8_t> &data) {
-    // std::array<unsigned, 256> cnt{};
-    // for (const auto &c: data) {
-    //     ++cnt[c];
-    // }
-
-    auto cnt = CNT;
-
-    // output_freq(cnt);
-    // exit(0);
-
-    auto root = build_tree(cnt);
-    const auto codes = build_codes(root);
-
-    // debug huffman codes
-    // {
-    //     uint64_t sum_len = 0;
-    //     uint64_t sum_sq = 0;
-    //     for (const auto &c: codes) {
-    //         sum_len += c.size();
-    //         sum_sq += c.size() * c.size();
-    //     }
-    //     double avg = sum_len * 1.0 / HUFFMAN_SIZE;
-    //     std::cout << "avg code length = " << avg << std::endl;
-    //     std::cout << "stddev = " << sqrt(sum_sq * 1.0 / HUFFMAN_SIZE - avg * avg) << std::endl;
-    // }
-
-    std::basic_string<uint8_t> out;
-    out.push_back(0);
-    unsigned out_bits_ptr = 0;
-    auto push_number = [&](unsigned number) {
-        CHECK(number < HUFFMAN_SIZE);
-        for (const auto &bit: codes[number]) {
-            CHECK(bit <= 1);
             if (bit) {
-                out.back() ^= 1u << (7 - out_bits_ptr % 8);
-            }
-            ++out_bits_ptr;
-            if (out_bits_ptr % 8 == 0) {
-                out.push_back(0);
+                v = v->right;
+            } else {
+                v = v->left;
             }
         }
-    };
-
-    unsigned number = 0;
-    unsigned bit_i = 0;
-    while (bit_i < data.size() * 8) {
-        uint8_t bit = (data[bit_i / 8] >> (7 - bit_i % 8)) & 1;
-        if (bit) {
-            number ^= 1u << (HUFFMAN_BITS - 1 - bit_i % HUFFMAN_BITS);
-        }
-        ++bit_i;
-        if (bit_i % HUFFMAN_BITS == 0) {
-            push_number(number);
-            number = 0;
-        }
+        return v->symbol;
     }
-    number ^= 1u << (HUFFMAN_BITS - 1 - bit_i % HUFFMAN_BITS);
-    push_number(number);
-    out.back() ^= 1u << (7 - out_bits_ptr % 8);
-    // std::cout << "encode: cnt_bits = " << out_bits_ptr << std::endl;
-    return out;
-}
 
-std::basic_string<uint8_t> decode(std::basic_string<uint8_t> data) {
-    const auto root = build_tree(CNT);
-    const auto codes = build_codes(root);
-
-    CHECK(data.back() != 0);
-    const unsigned cnt_bits = (data.size() - 1) * 8 + (7 - td::count_trailing_zeroes32(data.back()));
-    std::basic_string<uint8_t> out;
-    out.push_back(0);
-    unsigned out_bits_ptr = 0;
-    auto push_number = [&](unsigned number) {
-        for (uint8_t it = 0; it < HUFFMAN_BITS; ++it) {
-            const unsigned bit_i = HUFFMAN_BITS - 1 - it;
-            uint8_t bit = (number >> bit_i) & 1;
-            if (bit) {
-                out.back() ^= 1u << (7 - out_bits_ptr % 8);
+    explicit HuffmanEncoderDecoder(const std::vector<unsigned> &freq, bool verbose = false) {
+        // build a tree
+        auto cmp = [&](const Ptr<Node> &a, const Ptr<Node> &b) {
+            if (a == b) {
+                return false;
             }
-            ++out_bits_ptr;
-            if (out_bits_ptr % 8 == 0) {
-                out.push_back(0);
+            if (a->freq != b->freq) {
+                return a->freq < b->freq;
             }
-        }
-    };
-
-    Ptr<Node> v = root;
-    for (unsigned bit_i = 0; bit_i < cnt_bits; ++bit_i) {
-        uint8_t bit = (data[bit_i / 8] >> (7 - bit_i % 8)) & 1;
-        if (bit) {
-            v = v->right;
-        } else {
-            v = v->left;
-        }
-        CHECK(v);
-        if (v->number != -1u) {
-            CHECK(!v->left);
-            CHECK(!v->right);
-            CHECK(v->number < HUFFMAN_SIZE);
-            push_number(v->number);
-            v = root;
-        }
-    }
-    CHECK(v == root);
-
-    unsigned last_bit = out_bits_ptr - 1;
-    while (!((out[last_bit / 8] >> (7 - last_bit % 8)) & 1)) {
-        --last_bit;
-    }
-    CHECK(last_bit % 8 == 0);
-    CHECK(last_bit > 0);
-    --last_bit;
-    while (out.size() - 1 > last_bit / 8) {
-        out.pop_back();
-    }
-    return out;
-}
-
-std::basic_string<uint8_t> encode_8(const std::basic_string<uint8_t> &data) {
-    // std::array<unsigned, 256> cnt{};
-    // for (const auto &c: data) {
-    //     ++cnt[c];
-    // }
-
-    auto cnt = CNT;
-
-    // output_freq(cnt);
-    // exit(0);
-
-    auto root = build_tree(cnt);
-    const auto codes = build_codes(root);
-
-    std::basic_string<uint8_t> out;
-    uint8_t byte = 0;
-    unsigned bits_ptr = 0;
-    for (const auto &c: data) {
-        for (const auto &bit: codes[c]) {
-            if (bit) {
-                byte ^= (1u << (7 - bits_ptr));
+            if (a->min_depth != b->min_depth) {
+                return a->min_depth < b->min_depth;
             }
-            ++bits_ptr;
-            if (bits_ptr == 8) {
-                out.push_back(byte);
-                bits_ptr = 0;
-                byte = 0;
+            CHECK(a->min_symbol != b->min_symbol);
+            return a->min_symbol < b->min_symbol;
+        };
+
+        unsigned sum_freq = 0;
+        std::set<Ptr<Node>, decltype(cmp)> nodes(cmp);
+        for (unsigned s = 0; s < freq.size(); ++s) {
+            // if (freq[s] > 0) {
+                nodes.insert(std::make_shared<Node>(s, freq[s]));
+                sum_freq += freq[s];
+            // }
+        }
+        const unsigned cnt_alive_symbols = nodes.size();
+        CHECK(!nodes.empty());
+        while (nodes.size() > 1) {
+            auto a = *nodes.begin();
+            nodes.erase(nodes.begin());
+            auto b = *nodes.begin();
+            nodes.erase(nodes.begin());
+
+            nodes.insert(std::make_shared<Node>(a, b));
+        }
+        root = *nodes.begin();
+
+        // calculate codes
+        codes.resize(freq.size());
+        unsigned sum_code_lengths = 0;
+        unsigned sum_code_lengths_weighted = 0;
+        uint8_t max_code_length = 0;
+        auto dfs = [&](auto &&self, Ptr<Node> v, uint64_t code, uint8_t code_length) {
+            if (v->symbol != -1u) {
+                CHECK(code_length <= 64);
+                codes[v->symbol] = {code, code_length};
+                sum_code_lengths += code_length;
+                sum_code_lengths_weighted += code_length * v->freq;
+                max_code_length = std::max(max_code_length, code_length);
+                return;
             }
+
+            self(self, v->left, code * 2, code_length + 1);
+
+            self(self, v->right, code * 2 + 1, code_length + 1);
+        };
+
+        dfs(dfs, root, 0, 0);
+
+        if (verbose) {
+            std::cout << "HUFFMAN stats: " << std::endl;
+            std::cout << "naive bits per symbol: " << int(len_in_bits(freq.size() - 1)) << std::endl;
+            std::cout << "huffman bits per symbol: " << sum_code_lengths * 1.0 / freq.size() << std::endl;
+            std::cout << "huffman bits per symbol weighted: " << sum_code_lengths_weighted * 1.0 / sum_freq << std::endl;
+            std::cout << "cnt symbols with freq > 0: " << cnt_alive_symbols << " out of " << freq.size() << std::endl;
+            std::cout << "max_code_length: " << int(max_code_length) << std::endl;
         }
     }
-    byte ^= (1u << (7 - bits_ptr));
-    out.push_back(byte);
-    return out;
-}
+};
 
-std::basic_string<uint8_t> decode_8(std::basic_string<uint8_t> data) {
-    const auto root = build_tree(CNT);
-    const auto codes = build_codes(root);
+inline void analyse_for_n(const unsigned n) {
+    std::cout << "different codings for 0 ... " << n - 1 << " numbers" << std::endl;
 
-    unsigned cnt_bits = data.size() * 8 - 1;
-    unsigned trailing_zeros = td::count_trailing_zeroes32(data.back());
-    CHECK(trailing_zeros <= 7);
-    CHECK((data.back() >> trailing_zeros) & 1);
-    data.back() ^= 1u << trailing_zeros;
-    cnt_bits -= trailing_zeros;
+    std::cout << "naive (max bytes for each): " << len_in_bytes(n - 1) * 8 << std::endl;
 
-    Ptr<Node> v = root;
-    std::basic_string<uint8_t> out;
-    for (unsigned bit_i = 0; bit_i < cnt_bits; ++bit_i) {
-        uint8_t bit = (data[bit_i / 8] >> (7 - bit_i % 8)) & 1;
-        if (bit) {
-            v = v->right;
-        } else {
-            v = v->left;
+    std::cout << "naive (max bits for each): " << int(len_in_bits(n - 1)) << std::endl;
+
+    std::cout << "store offsets (bytes <= bytes needed for current i) in bytes: "; {
+        unsigned sum_bits = 0;
+        for (unsigned i = 0; i < n; ++i) {
+            sum_bits += 8 * len_in_bytes(i);
         }
-        CHECK(v);
-        if (v->number != -1u) {
-            CHECK(!v->left);
-            CHECK(!v->right);
-            CHECK(v->number < 256);
-            out.push_back(v->number);
-            v = root;
-        }
+        std::cout << sum_bits * 1.0 / n << std::endl;
     }
 
-    return out;
+    std::cout << "store offsets (bits <= bits needed for current i) in bits: "; {
+        unsigned sum_bits = 0;
+        for (unsigned i = 0; i < n; ++i) {
+            sum_bits += len_in_bits(i);
+        }
+        std::cout << sum_bits * 1.0 / n << std::endl;
+    }
+
+    for (unsigned iter = 0; iter < 2; ++iter) {
+        std::cout << "first x bits define length of the number in bits (=y), so x+y_i bits overall per number";
+        if (iter == 1) {
+            std::cout << "but numbers <= n/2 are more probable";
+        }
+        std::cout << std::endl;
+        const unsigned max_bits_needed = len_in_bits(n - 1);
+        unsigned best_x = -1u;
+        unsigned best_sum_len = -1u;
+        uint8_t best_offset = 255;
+        unsigned denom = 0;
+        for (unsigned x = 0; x < 16; ++x) {
+            uint8_t offset = 1;
+            while (offset + ((1u << x) - 1) < max_bits_needed) {
+                ++offset;
+            }
+
+            denom = 0;
+            unsigned cur_sum = 0;
+            for (unsigned i = 0; i < n; ++i) {
+                unsigned coef = 1;
+                if (iter == 1) {
+                    if (i < n / 5) {
+                        coef = 100;
+                    }
+                }
+                cur_sum += coef * (x + std::max(offset, len_in_bits(i)));
+                denom += coef;
+            }
+
+            if (cur_sum < best_sum_len) {
+                best_sum_len = cur_sum;
+                best_x = x;
+                best_offset = offset;
+            }
+
+            std::cout << "for x=" << x << ", offset=" << int(offset) << ": " << cur_sum * 1.0 / denom << std::endl;
+        }
+        std::cout << "best_x = " << best_x << ", best_offset = " << int(best_offset) << ", best avg bits = " <<
+                best_sum_len * 1.0 / denom << std::endl;
+    }
 }
 };

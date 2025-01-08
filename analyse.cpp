@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 
+#include "huffman.hpp"
 #include "utils.h"
 #include "vm/excno.hpp"
 
@@ -15,6 +16,10 @@ std::map<uint64_t, unsigned> cnt_data_bytes;
 
 std::map<const vm::Cell *, std::set<const vm::Cell *> > parents;
 std::map<unsigned, unsigned> cnt_refs_map;
+
+std::vector<unsigned> cnt_d1;
+std::vector<unsigned> cnt_data_size;
+std::vector<unsigned> cnt_d1_d2;
 
 void dfs(const td::Ref<vm::Cell> &cell, bool is_root = false) {
     if (was.count(cell.get())) {
@@ -45,6 +50,14 @@ void dfs(const td::Ref<vm::Cell> &cell, bool is_root = false) {
         CHECK(depth.count(ref.get()));
         depth[cell.get()] = std::max(depth[cell.get()], depth[ref.get()] + 1);
     }
+
+    const uint8_t d1 = cnt_refs + 8 * (cell_loaded.data_cell->is_special());
+    ++cnt_d1[d1];
+
+    const unsigned data_size = cell_loaded.data_cell->get_bits();
+    ++cnt_data_size[data_size];
+
+    ++cnt_d1_d2[(data_size << 4u) ^ d1];
 
     // if (is_root) {
     //     vm::CellSlice cell_slice = cell_to_slice(cell);
@@ -212,7 +225,56 @@ void analyse(const std::string &block_path) {
 }
 
 int main() {
-    static const std::string block_path = "/Users/pavel/Programming/MaraTON/ton-sample-tests/1-025.txt";
+    const std::string pref = "/Users/pavel/Programming/MaraTON/ton-sample-tests/";
+    const std::string files_names_file = pref + "file_list.txt";
 
-    analyse(block_path);
+    cnt_d1.assign(16, 0);
+    cnt_data_size.assign(1024, 0);
+    cnt_d1_d2.assign(1024 * 16, 0);
+
+    std::ifstream files_names(files_names_file);
+    std::string line;
+    while (files_names >> line) {
+        if (line.empty() || line[0] != '1') {
+            continue;
+        }
+        line = pref + line;
+
+        // line = "/Users/pavel/Programming/MaraTON/ton-sample-tests/1-025.txt";
+
+        analyse(line);
+    }
+
+    // d1
+    {
+        std::cout << "d1 stats: " << std::endl;
+        std::cout << "static const std::vector<unsigned> d1_freq = {";
+        for (const auto &it: cnt_d1) {
+            std::cout << it << ",";
+        }
+        std::cout << "};" << std::endl;
+        huffman::HuffmanEncoderDecoder tmp(cnt_d1, true);
+    }
+
+    // data sizes
+    {
+        std::cout << "data sizes stats: " << std::endl;
+        std::cout << "static const std::vector<unsigned> data_size_freq = {";
+        for (const auto &it: cnt_data_size) {
+            std::cout << it << ",";
+        }
+        std::cout << "};" << std::endl;
+        huffman::HuffmanEncoderDecoder tmp(cnt_data_size, true);
+    }
+
+    // both
+    {
+        std::cout << "d1_d2 stats: " << std::endl;
+        std::cout << "static const std::vector<unsigned> d1_d2_freq = {";
+        for (const auto &it: cnt_d1_d2) {
+            std::cout << it << ",";
+        }
+        std::cout << "};" << std::endl;
+        huffman::HuffmanEncoderDecoder tmp(cnt_d1_d2, true);
+    }
 }
