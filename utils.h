@@ -86,6 +86,52 @@ inline void push_as_bytes(std::basic_string<uint8_t> &data, uint64_t number, uin
     data += tmp;
 }
 
+inline void insert_bits_to_beginning(
+    std::basic_string<uint8_t> &data,
+    unsigned &data_cnt_bits,
+    unsigned num,
+    unsigned num_bits
+) {
+    const unsigned new_cnt_bits = data_cnt_bits + num_bits;
+    std::basic_string<uint8_t> new_data((new_cnt_bits + 7) / 8, 0);
+    td::BitPtr new_data_bits(new_data.data(), 0);
+
+    new_data_bits.store_uint(num, num_bits);
+    new_data_bits.offs += num_bits;
+
+    td::BitPtr data_bits(data.data(), 0);
+
+    while (data_cnt_bits > 0) {
+        const unsigned cur_bits = std::min(data_cnt_bits, 32u);
+        new_data_bits.store_uint(data_bits.get_uint(cur_bits), cur_bits);
+        new_data_bits.offs += cur_bits;
+        data_bits.offs += cur_bits;
+        data_cnt_bits -= cur_bits;
+    }
+
+    data = new_data;
+    data_cnt_bits = new_cnt_bits;
+}
+
+inline void push_bit_range(
+    std::basic_string<uint8_t> &data,
+    unsigned &data_cnt_bits,
+    td::BitPtr bit_ptr,
+    unsigned from,
+    unsigned cnt
+) {
+    td::BitPtr data_bit_ptr(data.data(), data_cnt_bits);
+    bit_ptr.offs = from;
+    while (cnt > 0) {
+        unsigned cur_cnt = std::min(cnt, 64u);
+        data_bit_ptr.store_uint(bit_ptr.get_uint(cur_cnt), cur_cnt);
+        data_bit_ptr.offs += cur_cnt;
+        bit_ptr.offs += cur_cnt;
+        cnt -= cur_cnt;
+    }
+    data_cnt_bits = data_bit_ptr.offs;
+}
+
 unsigned cnt_occurrences(const std::basic_string<uint8_t> &sample, const std::basic_string<uint8_t> &text) {
     const auto s = sample + text;
     const unsigned n = s.size();

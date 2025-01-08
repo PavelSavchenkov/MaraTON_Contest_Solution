@@ -35,7 +35,7 @@ struct MyCell {
         if (!is_special) {
             return CellType::Ordinary;
         }
-        const auto type = static_cast<CellType>(data.at(0));
+        const auto type = static_cast<CellType>((data.at(0) >> 6) + 1);
         CHECK(type != CellType::Ordinary);
         return type;
     }
@@ -51,23 +51,29 @@ struct MyCell {
         cnt_bits = cell_loaded.data_cell->size();
 
         vm::CellSlice cell_slice = cell_to_slice(cell);
-        unsigned bits_left = cnt_bits;
-        while (bits_left >= 8) {
-            uint8_t byte = cell_slice.fetch_ulong(8);
-            data.push_back(byte);
-            bits_left -= 8;
-        }
-        if (bits_left > 0) {
-            CHECK(bits_left < 8);
-            uint8_t last_byte = cell_slice.fetch_ulong(bits_left);
-            last_byte <<= 8 - bits_left;
-            data.push_back(last_byte);
 
-            CHECK(((last_byte >> (7 - bits_left)) & 1) == 0);
-            // last_byte ^= 1u << (7 - bits_left);
-        } else {
-            CHECK(bits_left == 0);
+        std::basic_string<uint8_t> data_buf((cnt_bits + 7) / 8, 0);
+        td::BitPtr data_bit_buf(data_buf.data(), 0);
+
+        unsigned bits_left = cnt_bits;
+        while (bits_left > 0) {
+            uint8_t cur_bits = std::min(bits_left, 8u);
+            uint8_t byte = cell_slice.fetch_ulong(cur_bits);
+            bits_left -= cur_bits;
+            if (is_special && data_bit_buf.offs == 0) {
+                CHECK(cur_bits >= 8);
+                CHECK(byte != 0);
+                --byte;
+                CHECK(byte < 4);
+                data_bit_buf.store_uint(byte, 2);
+                data_bit_buf.offs += 2;
+                cnt_bits -= 6;
+            } else {
+                data_bit_buf.store_uint(byte, cur_bits);
+                data_bit_buf.offs += cur_bits;
+            }
         }
+        data = std::basic_string<uint8_t>(data_bit_buf.ptr, (cnt_bits + 7) / 8);
 
         const unsigned cnt_refs = cell_loaded.data_cell->get_refs_cnt();
         CHECK(cnt_refs <= 4);
@@ -78,7 +84,7 @@ struct MyCell {
 
         if (cell_type == CellType::MerkleUpdate || cell_type == CellType::MerkleProof) {
             data.resize(1);
-            cnt_bits = 8;
+            cnt_bits = 2;
         }
     }
 
@@ -349,15 +355,12 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
         {
             const auto old_offs = buffer_bit.offs;
             buffer_bit.offs = offset_data;
-            for (unsigned j = 0; j < my_cell->cnt_bits / 8; j++) {
-                my_cell->data.push_back(buffer_bit.get_uint(8));
-                buffer_bit.offs += 8;
-            }
-            if (my_cell->cnt_bits % 8 != 0) {
-                uint8_t byte = buffer_bit.get_uint(my_cell->cnt_bits % 8);
-                byte <<= (8 - my_cell->cnt_bits % 8);
-                buffer_bit.offs += my_cell->cnt_bits % 8;
-                my_cell->data.push_back(byte);
+            my_cell->data.resize((my_cell->cnt_bits + 7) / 8, 0);
+            td::BitPtr my_cell_bit_ptr(my_cell->data.data(), 0);
+            for (unsigned j = 0; j < my_cell->cnt_bits; ++j) {
+                my_cell_bit_ptr.store_uint(buffer_bit.get_uint(1), 1);
+                buffer_bit.offs += 1;
+                my_cell_bit_ptr.offs += 1;
             }
             offset_data = buffer_bit.offs;
             buffer_bit.offs = old_offs;
@@ -384,25 +387,48 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
         const auto cell_type = my_cell->get_type();
         std::basic_string<uint8_t> data = my_cell->data;;
         unsigned cnt_bits = my_cell->cnt_bits;
+        if (my_cell->is_special) {
+            const uint8_t cell_type_int = (data[0] >> 6) + 1;
+            cnt_bits += 6;
+
+            std::basic_string<uint8_t> new_data((cnt_bits + 7) / 8, 0);
+            td::BitPtr new_data_ptr(new_data.data(), 0);
+            new_data_ptr.store_uint(cell_type_int, 8);
+            new_data_ptr.offs += 8;
+
+            td::BitPtr data_ptr(data.data(), 2);
+            unsigned new_data_bits = new_data_ptr.offs;
+            push_bit_range(new_data, new_data_bits, data_ptr, 2, cnt_bits - 8);
+
+            data = new_data;
+            CHECK(new_data_bits == cnt_bits);
+            cnt_bits = new_data_bits;
+        }
         if (cell_type == CellType::MerkleUpdate || cell_type == CellType::MerkleProof) {
             // hash0 (256), hash1, depth0 (8 * bytes_for_index), depth1
             CHECK(refs.size() <= 2);
             CHECK(data.size() == 1);
             CHECK(cnt_bits == 8);
+            const uint8_t bytes_for_index_max = len_in_bytes(n);
+
+            data.resize(1 + 256 / 8 * 2 + 8 * bytes_for_index_max, 0);
+            td::BitPtr data_ptr(data.data(), 8);
 
             for (unsigned j = 0; j < refs.size(); ++j) {
                 const auto hash = refs[j]->get_hash(0);
                 const auto slice = hash.as_slice();
-                auto calc_hash = std::basic_string<uint8_t>(slice.data(), slice.data() + (256 / 8));
-                data += calc_hash;
+                for (unsigned k = 0; k < 256 / 8; ++k) {
+                    data_ptr.store_uint(slice.data()[k], 8);
+                    data_ptr.offs += 8;
+                }
             }
 
-            const uint8_t bytes_for_index_max = len_in_bytes(n);
             for (unsigned j = 0; j < refs.size(); ++j) {
                 unsigned depth = refs[j]->get_depth(0);
-                push_as_bytes(data, depth, bytes_for_index_max);
+                data_ptr.store_uint(depth, bytes_for_index_max * 8);
+                data_ptr.offs += bytes_for_index_max * 8;
             }
-            cnt_bits = data.size() * 8;
+            cnt_bits = data_ptr.offs;
         }
 
         // add data
