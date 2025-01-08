@@ -37,6 +37,8 @@ struct Dictionary {
         );
         CHECK(top_sort[0] == last);
 
+        std::cout << "top sort ready" << std::endl;
+
         std::vector<std::vector<unsigned> > rev_to(n);
         for (unsigned v = 0; v < n; v++) {
             for (const auto &it: nodes[v].to) {
@@ -44,6 +46,8 @@ struct Dictionary {
                 rev_to[to].push_back(v);
             }
         }
+
+        std::cout << "rev_to ready" << std::endl;
 
         // cnt occurrences == number of paths to the last character in the training data
         std::vector<unsigned> cnt_occured(n, 0);
@@ -55,6 +59,8 @@ struct Dictionary {
                 cnt_occured[v] += cnt_occured[to];
             }
         }
+
+        std::cout << "cnt_occured ready" << std::endl;
 
         // in how many distinct strings from the training set the substring is occurred
         std::vector<unsigned> cnt_diff_strings(n, 0);
@@ -90,6 +96,8 @@ struct Dictionary {
             }
         }
 
+        std::cout << "cnt_diff_strings ready" << std::endl;
+
         std::vector<unsigned> candidates;
         for (unsigned v = 0; v < n; v++) {
             if (nodes[v].len >= 4 && nodes[v].len <= max_size && cnt_occured[v] > 1) {
@@ -117,12 +125,18 @@ struct Dictionary {
             }
         );
 
+        std::cout << "sorted candidates ready" << std::endl;
+
         std::set<unsigned> dict_v;
         std::vector<char> killed(n, false);
         std::vector<char> in_dict(n, false);
         unsigned sum_len = 0;
+        unsigned cnt_processed_candidates = 0;
         for (const auto candidate: candidates) {
             if (killed[candidate]) {
+                continue;
+            }
+            if (nodes[candidate].len + sum_len > max_size) {
                 continue;
             }
 
@@ -168,6 +182,12 @@ struct Dictionary {
                     }
                 }
                 sum_len = new_sum_len;
+                std::cout << "ADDED DICT: " << "len=" << nodes[candidate].len
+                        << ", cnt_diff=" << cnt_diff_strings[candidate] << std::endl;
+            } else {
+                std::cout << "NOT added, new_sum_len=" << new_sum_len << ", sum_len=" << sum_len << ", ";
+                std::cout << "len=" << nodes[candidate].len
+                        << ", cnt_diff=" << cnt_diff_strings[candidate] << std::endl;
             }
             // std::cout << "cur_strs_in_dict = " << dict_v.size() << std::endl;
             // std::cout << "cand len = " << nodes[candidate].len << ", cand cnt = " << cnt_occured[candidate] << std::endl;
@@ -176,6 +196,13 @@ struct Dictionary {
             //     std::cout << "(len=" << nodes[v].len << ", cnt=" << cnt_occured[v] << ") ";
             // }
             // std::cout << "\n---" << std::endl;
+
+            ++cnt_processed_candidates;
+            if (cnt_processed_candidates % 500 == 0) {
+                std::cout << "cnt_processed_candidates = " << cnt_processed_candidates
+                        << " out of " << candidates.size();
+                std::cout << ", dict_v.size() = " << dict_v.size() << std::endl;
+            }
         }
         CHECK(sum_len <= max_size);
 

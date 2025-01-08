@@ -4,14 +4,19 @@
 #include "utils.h"
 #include "vm/excno.hpp"
 
-std::set<const vm::Cell*> was;
+std::set<const vm::Cell *> was;
 std::map<td::uint8, unsigned> cnt_type;
 std::map<td::uint8, td::uint32> sum_data_sizes;
 std::map<unsigned, unsigned> cnt_with_level;
 
-std::map<const vm::Cell*, int> depth;
+std::map<const vm::Cell *, int> depth;
 
-void dfs(const td::Ref<vm::Cell>& cell) {
+std::map<uint64_t, unsigned> cnt_data_bytes;
+
+std::map<const vm::Cell *, std::set<const vm::Cell *> > parents;
+std::map<unsigned, unsigned> cnt_refs_map;
+
+void dfs(const td::Ref<vm::Cell> &cell, bool is_root = false) {
     if (was.count(cell.get())) {
         return;
     }
@@ -30,12 +35,31 @@ void dfs(const td::Ref<vm::Cell>& cell) {
     // find out data size
     sum_data_sizes[cell_type_int] += cell_loaded.data_cell->size();
 
-    for (unsigned i = 0; i < cell_loaded.data_cell->get_refs_cnt(); i++) {
+    const auto cnt_refs = cell_loaded.data_cell->get_refs_cnt();
+    ++cnt_refs_map[cnt_refs];
+    for (unsigned i = 0; i < cnt_refs; i++) {
         td::Ref<vm::Cell> ref = cell_loaded.data_cell->get_ref(i);
+        parents[ref.get()].insert(cell.get());
         dfs(ref);
 
         CHECK(depth.count(ref.get()));
         depth[cell.get()] = std::max(depth[cell.get()], depth[ref.get()] + 1);
+    }
+
+    // if (is_root) {
+    //     vm::CellSlice cell_slice = cell_to_slice(cell);
+    //     uint64_t bytes = cell_slice.fetch_ulong(32);
+    //     std::cout << std::hex << "root 4 bytes: 0x" << bytes << std::dec << std::endl;
+    //     std::cout << "number of references: " << cell_loaded.data_cell->get_refs_cnt() << std::endl;
+    //     std::cout << "cnt data bits: " << cell_loaded.data_cell->get_bits() << std::endl;
+    //     exit(0);
+    // }
+
+    static uint8_t bits_to_look = 8;
+    if (cell_type == vm::Cell::SpecialType::Ordinary && cell_loaded.data_cell->size() >= bits_to_look) {
+        vm::CellSlice cell_slice = cell_to_slice(cell);
+        uint64_t bytes = cell_slice.fetch_ulong(bits_to_look);
+        cnt_data_bytes[bytes]++;
     }
 
     if (cell_type == vm::Cell::SpecialType::MerkleUpdate) {
@@ -49,7 +73,7 @@ void dfs(const td::Ref<vm::Cell>& cell) {
 
         // skip 256 bits of "from hash"
         std::vector<unsigned char> first_hash;
-        for (int i = 0; i < 256/8; ++i) {
+        for (int i = 0; i < 256 / 8; ++i) {
             first_hash.push_back(cell_slice.fetch_long(8));
         }
 
@@ -73,7 +97,8 @@ void dfs(const td::Ref<vm::Cell>& cell) {
         std::cout << "first 4 bytes in the first referenced cell = 0x" << std::hex << constructor_id << std::endl;
 
         const auto ref_hash = ref->get_hash(0);
-        std::cout << "(my    ) first byte of hash of the first ref = " << std::bitset<8>(ref_hash.as_slice()[0]) << std::endl;
+        std::cout << "(my    ) first byte of hash of the first ref = " << std::bitset<8>(ref_hash.as_slice()[0]) <<
+                std::endl;
         std::cout << "(stored) first byte of hash of the first ref = " << std::bitset<8>(first_hash[0]) << std::endl;
 
         std::cout << "levels of sons of \"merkle update\" cell" << std::endl;
@@ -104,7 +129,7 @@ void dfs(const td::Ref<vm::Cell>& cell) {
     }
 }
 
-void analyse(const std::string& block_path) {
+void analyse(const std::string &block_path) {
     td::Ref<vm::Cell> root = read_from_filepath_to_root_cell(block_path);
 
     was.clear();
@@ -112,26 +137,82 @@ void analyse(const std::string& block_path) {
     cnt_with_level.clear();
 
     try {
-        dfs(root);
-    } catch (vm::VmError& e) {
+        dfs(root, true);
+    } catch (vm::VmError &e) {
         std::cout << "Exception in dfs: " << e.get_msg() << std::endl;
     }
 
     std::cout << "visited: " << was.size() << std::endl;
-    for (const auto& it : cnt_type) {
+    for (const auto &it: cnt_type) {
         std::cout << cell_type_int_to_string(it.first) << ": ";
         const auto cnt = it.second;
         std::cout << "cnt = " << cnt << ", avg data bits = " << sum_data_sizes[it.first] * 1.0 / cnt << std::endl;
     }
     std::cout << "Levels: " << std::endl;
-    for (const auto& it : cnt_with_level) {
+    for (const auto &it: cnt_with_level) {
         std::cout << "level=" << it.first << ", its cnt=" << it.second << std::endl;
     }
     std::cout << "root depth = " << depth[root.get()] << std::endl;
+
+    std::vector<std::pair<unsigned, uint64_t> > all_bytes;
+    for (const auto &it: cnt_data_bytes) {
+        uint64_t bytes = it.first;
+        unsigned cnt = it.second;
+        all_bytes.emplace_back(cnt, bytes);
+    }
+    std::sort(all_bytes.begin(), all_bytes.end());
+    for (const auto &it: all_bytes) {
+        uint64_t bytes = it.second;
+        unsigned cnt = it.first;
+        std::cout << std::hex << "0x" << std::setfill('0') << std::setw(2) << bytes << std::dec << " -> " << cnt <<
+                std::endl;
+    }
+
+    std::map<unsigned, unsigned> cnt_parents;
+    std::cout << "------------------\nparent stats: " << std::endl;
+    for (const auto &it: parents) {
+        const auto node = it.first;
+        const auto pars = it.second;
+        ++cnt_parents[pars.size()];
+        // if (it.second.size() == 28) {
+        //     vm::Cell::LoadedCell cell_loaded = it.first->load_cell().move_as_ok();
+        //     const unsigned cnt_bits = it.first->load_cell().move_as_ok().data_cell->get_bits();
+        //     auto cell_slice = cell_to_slice(td::Ref<vm::Cell>(it.first));
+        //     std::cout << "node with 28 parents: " << std::endl;
+        //     std::cout << "cnt bits: " << cnt_bits << std::endl;
+        //     std::cout << "is special: " << it.first->load_cell().move_as_ok().data_cell->is_special() << std::endl;
+        //     std::cout << "first 1 byte: 0x" << std::hex << cell_slice.fetch_ulong(8) << std::dec << std::endl;
+        //     for (int i = 0; i < 3; ++i) cell_slice.fetch_ulong(8);
+        //     for (int i = 0; i + 8 * 4 < cnt_bits; ++i) std::cout << cell_slice.fetch_ulong(1);
+        //     std::cout << std::endl;
+        // }
+    }
+    std::cout << "cnt nodes with the number of parents = x" << std::endl;
+    for (const auto &it: cnt_parents) {
+        std::cout << "cnt parents = " << it.first << ", nodes with such cnt = " << it.second << std::endl;
+    }
+    std::cout << std::endl;
+    std::cout << "----------------\ncnt nodes with the number of refs = x" << std::endl;
+    unsigned sum = 0;
+    for (const auto &it: cnt_refs_map) {
+        sum += it.second;
+    }
+    const std::vector<unsigned> lens{2, 3, 1, 4, 4};
+    double sum_bits = 0;
+    double sum_prob = 0;
+    for (const auto &it: cnt_refs_map) {
+        const double prob = it.second * 1.0 / sum;
+        std::cout << "cnt refs = " << it.first << ", nodes with such cnt = " << it.second
+                << ", prob = " << prob << std::endl;
+        sum_bits += prob * lens[it.first];
+        sum_prob += prob;
+    }
+    std::cout << "avg_bits = " << sum_bits << ", sum_prob = " << sum_prob << std::endl;
+    std::cout << std::endl;
 }
 
 int main() {
-    static const std::string block_path = "/Users/pavel/Programming/MaraTON/ton-sample-tests/1-013.txt";
+    static const std::string block_path = "/Users/pavel/Programming/MaraTON/ton-sample-tests/1-025.txt";
 
     analyse(block_path);
 }

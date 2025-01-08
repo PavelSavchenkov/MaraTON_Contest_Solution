@@ -32,12 +32,24 @@ int main() {
         const auto S_ = Serializator::compress(base64_data, false, true);
         std::basic_string<uint8_t> S(reinterpret_cast<const uint8_t *>(S_.data()), S_.size());
 
+        std::basic_string<uint8_t> S_bits;
+        td::BitPtr bits(S.data(), 0);
+        for (unsigned it = 0; it < S.size() * 8; ++it) {
+            S_bits.push_back(bits.get_uint(1));
+            bits.offs += 1;
+        }
+        S = S_bits;
+
         total_bytes += S.size();
         std::cout << "training on " << line << ", " << S.size() << " bytes, total bytes = " << total_bytes << std::endl;
         dict.add_training_data(S);
+
+        // if (total_bytes >= 6 * int(1e6)) {
+        //     break;
+        // }
     }
 
-    std::basic_string<uint8_t> dict_bytes = dict.build_dict(1 << 16);
+    std::basic_string<uint8_t> dict_bytes = dict.build_dict((1 << 16) * 8);
     std::cout << "dict length in bytes: " << dict_bytes.size() << std::endl;
 
     std::basic_string<uint8_t> dict_lz = LZ_compressor::compress(dict_bytes, {});
