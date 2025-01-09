@@ -2,7 +2,7 @@
 #include "utils.h"
 
 namespace lz_compressor_bits {
-static const unsigned MIN_MATCH_LENGTH = 4 * 8;
+static const unsigned MIN_MATCH_LENGTH = 42; //32; 4 * 8;
 static const unsigned LITERAL_LENGTH_BITS_BLOCK = 9;
 static const unsigned MATCH_LENGTH_BITS_BLOCK = 8;
 
@@ -19,14 +19,14 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_byte
     }
 
     // check for potential stop symbol
-    {
-        auto stop_symbol = get_min_bit_str_not_in(input_bits);
-        std::cout << "stop symbol bit string, len= " << int(len_in_bits(stop_symbol)) << ", symbol=";
-        for (unsigned i = len_in_bits(stop_symbol); i > 0; --i) {
-            std::cout << ((stop_symbol >> (i - 1)) & 1);
-        }
-        std::cout << std::endl;
-    }
+    // {
+    //     auto stop_symbol = get_min_bit_str_not_in(input_bits);
+    //     std::cout << "stop symbol bit string, len= " << int(len_in_bits(stop_symbol)) << ", symbol=";
+    //     for (unsigned i = len_in_bits(stop_symbol); i > 0; --i) {
+    //         std::cout << ((stop_symbol >> (i - 1)) & 1);
+    //     }
+    //     std::cout << std::endl;
+    // }
 
     const unsigned n = input_bits.size();
     std::vector<unsigned> p; {
@@ -132,7 +132,7 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_byte
         unsigned cnt_references = 0;
         std::vector<unsigned> match_lengths{};
         for (unsigned i = 0; i < n;) {
-            const auto match_len = best_match_len[i];
+            auto match_len = best_match_len[i];
             if (match_len >= MIN_MATCH_LENGTH) {
                 // naive check of the match
                 {
@@ -141,6 +141,7 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_byte
                     for (unsigned it = 0; it < match_len; ++it) {
                         CHECK(input_bits[from + it] == input_bits[to + it]);
                     }
+                    CHECK(input_bits[from + match_len] != input_bits[to + match_len]);
                 }
                 sum_length_matches += match_len;
                 suff_referenced.insert(best_match_suff[i]);
@@ -156,7 +157,7 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_byte
                 }
                 bits_spent_on_match_len_tokens += push_number_as_blocks(match_len, MATCH_LENGTH_BITS_BLOCK);
                 const unsigned offset = i - best_match_suff[i];
-                std::cout << "offset=" << offset << ", match_len=" << match_len << std::endl;
+                // std::cout << "offset=" << offset << ", match_len=" << match_len << std::endl;
                 match_lengths.push_back(match_len);
                 const unsigned bit_len = len_in_bits(i);
                 bits_spent_on_match_offset_tokens += bit_len;
@@ -184,17 +185,17 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_byte
                                               bits_spent_on_match_offset_tokens;
         std::sort(match_lengths.begin(), match_lengths.end());
         const unsigned match_len_p90 = match_lengths[match_lengths.size() * 9 / 10];
-        std::cout << "serialize: " << "bits_spent_on_tokens=" << bits_spent_on_tokens
-                << "\nsum_matches_len=" << sum_length_matches
-                << "\nsum_matches_len in bytes: " << sum_length_matches / 8
-                << "\ncnt diff suff referenced: " << suff_referenced.size()
-                << "\ncnt_references: " << cnt_references
-                << "\nbits_spent_on_literal_tokens: " << bits_spent_on_literal_tokens
-                << "\nbits_spent_on_match_len_tokens: " << bits_spent_on_match_len_tokens
-                << "\nbits_spent_on_match_offset_tokens: " << bits_spent_on_match_offset_tokens
-                << "\navg literal len: " << sum_literal_lengths * 1.0 / cnt_references
-                << "\nmatch_len_p90: " << match_len_p90
-                << "\noverall " << input_bits.size() << " bits" << std::endl;
+        // std::cout << "serialize: " << "bits_spent_on_tokens=" << bits_spent_on_tokens
+        //         << "\nsum_matches_len=" << sum_length_matches
+        //         << "\nsum_matches_len in bytes: " << sum_length_matches / 8
+        //         << "\ncnt diff suff referenced: " << suff_referenced.size()
+        //         << "\ncnt_references: " << cnt_references
+        //         << "\nbits_spent_on_literal_tokens: " << bits_spent_on_literal_tokens
+        //         << "\nbits_spent_on_match_len_tokens: " << bits_spent_on_match_len_tokens
+        //         << "\nbits_spent_on_match_offset_tokens: " << bits_spent_on_match_offset_tokens
+        //         << "\navg literal len: " << sum_literal_lengths * 1.0 / cnt_references
+        //         << "\nmatch_len_p90: " << match_len_p90
+        //         << "\noverall " << input_bits.size() << " bits" << std::endl;
     }
 
     return {output_bits.ptr, static_cast<size_t>(output_bits.offs + 7) / 8};
