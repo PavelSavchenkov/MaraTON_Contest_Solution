@@ -12,100 +12,6 @@ static const unsigned MATCH_LENGHT_OFFSET = 4;
 static const uint8_t LITERAL_NIBBLE_BITS = 6;
 static const uint8_t MATCH_NIBBLE_BITS = 8 - LITERAL_NIBBLE_BITS;
 
-namespace SparseTableMin {
-std::vector<std::vector<unsigned>> min;
-
-void build(const std::vector<unsigned> &values) {
-    const unsigned n = values.size();
-    const unsigned logn = len_in_bits(n);
-    min.assign(logn + 1, std::vector<unsigned>(n));
-
-    for (unsigned i = 0; i < n; ++i) {
-        min[0][i] = values[i];
-    }
-    for (unsigned pw = 1; pw <= logn; ++pw) {
-        for (unsigned i = 0; i < n; ++i) {
-            min[pw][i] = std::min(
-                min[pw - 1][i],
-                min[pw - 1][std::min(n - 1, i + (1u << (pw - 1)))]
-            );
-        }
-    }
-}
-
-// [l, r)
-unsigned get_min(const unsigned l, const unsigned r) {
-    CHECK(l < r);
-    const unsigned pw = len_in_bits(r - l) - 1;
-    return std::min(min[pw][l], min[pw][r - (1u << pw)]);
-}
-};
-
-std::vector<unsigned> build_suff_arr(const std::basic_string<uint8_t> &s) {
-    const unsigned n = s.size();
-    std::vector<unsigned> p(n);
-
-    const unsigned MAX = *std::max_element(s.begin(), s.end());
-    const unsigned C = std::max(MAX + 1, n);
-
-    std::vector<unsigned> cnt(C, 0);
-    for (const auto &ch: s) {
-        ++cnt[ch];
-    }
-    for (unsigned i = 0; i + 1 < C; ++i) {
-        cnt[i + 1] += cnt[i];
-    }
-    for (unsigned i = 0; i < n; ++i) {
-        p[--cnt[s[i]]] = i;
-    }
-
-    std::vector<unsigned> c(C);
-    unsigned cls = 1;
-    c[p[0]] = cls - 1;
-    for (unsigned i = 1; i < n; ++i) {
-        if (s[p[i]] != s[p[i - 1]]) {
-            ++cls;
-        }
-        c[p[i]] = cls - 1;
-    }
-
-    std::vector<unsigned> nc(C);
-    std::vector<unsigned> np(n);
-    for (unsigned len = 1; len <= n; len *= 2) {
-        std::fill(std::begin(cnt), std::begin(cnt) + cls, 0);
-        for (unsigned i = 0; i < n; ++i) {
-            ++cnt[c[i]];
-        }
-        for (unsigned i = 0; i + 1 < cls; ++i) {
-            cnt[i + 1] += cnt[i];
-        }
-        for (unsigned ii = 0; ii < n; ++ii) {
-            unsigned i = n - 1 - ii;
-            const unsigned j = p[i];
-            unsigned j2 = (j + n - len) % n;
-            np[--cnt[c[j2]]] = j2;
-        }
-        p = np;
-
-        cls = 1;
-        nc[p[0]] = cls - 1;
-        for (unsigned i = 1; i < n; ++i) {
-            if (c[p[i]] != c[p[i - 1]] || c[(p[i] + len) % n] != c[(p[i - 1] + len) % n]) {
-                ++cls;
-            }
-            nc[p[i]] = cls - 1;
-        }
-        c = nc;
-    }
-
-    return p;
-}
-
-std::basic_string<uint8_t> compress_standard(const std::basic_string<uint8_t> &data) {
-    auto res = td::lz4_compress(td::BufferSlice(reinterpret_cast<const char *>(data.data()), data.size()));
-    return {reinterpret_cast<const uint8_t *>(res.data()), res.size()};
-}
-
 std::basic_string<uint8_t> compress(
     const std::basic_string<uint8_t> &data_,
     const std::basic_string<uint8_t> &dict
@@ -159,25 +65,7 @@ std::basic_string<uint8_t> compress(
     for (unsigned i = 0; i < n; ++i) {
         pos[p[i]] = i;
     }
-
-    // lcp[i] is lcp of p[i] and p[i + 1]
-    std::vector<unsigned> lcp(n, 0);
-    unsigned lcp_len = 0;
-    for (unsigned i = 0; i < n; ++i) {
-        const unsigned pi = pos[i];
-        if (pi == n - 1) {
-            continue;
-        }
-        const unsigned j = p[pi + 1];
-        lcp_len = std::min(lcp_len, n - j);
-        while (i + lcp_len < n && j + lcp_len < n && data[i + lcp_len] == data[j + lcp_len]) {
-            ++lcp_len;
-        }
-        lcp[pi] = lcp_len;
-        if (lcp_len > 0) {
-            --lcp_len;
-        }
-    }
+    const auto lcp = get_lcp_from_suff_arr(data, p, pos);
     const auto get_lcp_loop = [&](unsigned j, unsigned i) -> unsigned {
         j = p[j];
         i = p[i];
@@ -187,12 +75,12 @@ std::basic_string<uint8_t> compress(
         }
         return len;
     };
-    SparseTableMin::build(lcp);
+    SparseTableMin sparse_table(lcp);
     const auto get_lcp_fast = [&](unsigned j, unsigned i) -> unsigned {
         if (i > j) {
             std::swap(i, j);
         }
-        const auto res = SparseTableMin::get_min(i, j);
+        const auto res = sparse_table.get_min(i, j);
         return res;
     };
 
@@ -240,10 +128,12 @@ std::basic_string<uint8_t> compress(
         }
     }
 
-    const auto push_offset = [&](unsigned offset) {
+    const auto push_offset = [&](unsigned offset) -> unsigned {
+        const unsigned start_offs = out.offs;
         const uint8_t offset_bit_length = std::max(min_bits_for_offset, len_in_bits(offset));
         store_uint(offset_bit_length - min_bits_for_offset, bits_for_offset);
         store_uint(offset, offset_bit_length);
+        return out.offs - start_offs;
     };
 
     //  encoding
@@ -258,7 +148,9 @@ std::basic_string<uint8_t> compress(
             }
         }
     };
-    auto dump_lengths = [&](unsigned match_len, unsigned literal_len) {
+    auto dump_lengths = [&](unsigned match_len, unsigned literal_len) -> unsigned {
+        const unsigned start_offs = out.offs;
+
         unsigned literal_nibble = std::min(literal_len, (1u << LITERAL_NIBBLE_BITS) - 1);
         literal_len -= literal_nibble;
 
@@ -282,22 +174,36 @@ std::basic_string<uint8_t> compress(
         if (match_nibble == (1u << MATCH_NIBBLE_BITS) - 1) {
             dump_int_number_per_255(match_len);
         }
+
+        return out.offs - start_offs;
     };
+    unsigned sum_matches_len = 0;
+    unsigned bits_spent_on_tokens = 0;
     std::basic_string<uint8_t> literals;
-    for (unsigned i = dict.size(); i < n; ) {
+    std::set<unsigned> suff_referenced;
+    unsigned cnt_references = 0;
+    for (unsigned i = dict.size(); i < n;) {
         unsigned j = i;
         while (j < n && best_len[j] < MATCH_LENGHT_OFFSET) {
             ++j;
         }
         const auto literal_len = j - i;
         const auto match_len = best_len[j];
+        sum_matches_len += match_len;
         literals += data.substr(i, literal_len);
-        dump_lengths(match_len, literal_len);
+        bits_spent_on_tokens += dump_lengths(match_len, literal_len);
         if (j < n) {
-            push_offset(best_offset[j]);
+            bits_spent_on_tokens += push_offset(best_offset[j]);
+            suff_referenced.insert(j - best_offset[j]);
+            cnt_references += 1;
         }
         i = j + best_len[j];
     }
+
+    std::cout << "serialize in bytes: " << " sum_match_len(bytes)=" << sum_matches_len
+            << ", bits_spent_on_tokens=" << bits_spent_on_tokens << ", cnt diff suff referenced: "
+            << suff_referenced.size() << ", cnt_references: " << cnt_references
+    << ", overall " << data.size() * 8 << " bits" << std::endl;
 
     while (out.offs % 8 != 0) {
         store_uint(0, 1);
@@ -309,14 +215,6 @@ std::basic_string<uint8_t> compress(
     CHECK(out.offs % 8 == 0);
     const unsigned len_in_bytes = out.offs / 8;
     return {out.ptr, len_in_bytes};
-}
-
-std::basic_string<uint8_t> decompress_standard(const std::basic_string<uint8_t> &data) {
-    auto res = td::lz4_decompress(
-        td::BufferSlice(reinterpret_cast<const char *>(data.data()), data.size()),
-        2 << 20
-    ).move_as_ok();
-    return {reinterpret_cast<const uint8_t *>(res.data()), res.size()};
 }
 
 struct Token {

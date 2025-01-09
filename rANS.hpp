@@ -28,7 +28,7 @@ std::array<unsigned, context_vals> get_probs(const std::basic_string<uint8_t> &d
     for (unsigned c = 0; c < context_vals; ++c) {
         probs[c] = cnt_zero[c] * 1ull * probs_interval / cnt_both[c];
         if (probs[c] == 0) {
-            probs[c] == 1;
+            probs[c] = 1;
         }
         if (probs[c] == probs_interval) {
             probs[c] = probs_interval - 1;

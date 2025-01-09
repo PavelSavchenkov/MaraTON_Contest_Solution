@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "compressor.hpp"
 #include "huffman.hpp"
+#include "lz_compressor_bits.hpp"
 
 namespace Serializator {
 const std::string compressed_dict =
@@ -247,12 +248,11 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
         for (unsigned j = 0; j < my_cells[i]->cnt_refs; ++j) {
             const unsigned ref = my_cells[i]->refs[j];
             CHECK(ref < i);
-            bits_ptr.store_uint(ref, cnt_bits_i);
+            bits_ptr.store_uint(i - ref, cnt_bits_i);
             bits_ptr.offs += cnt_bits_i;
         }
     }
 
-    bool WAS = false;
     // data
     for (unsigned i = 0; i < n; ++i) {
         const auto my_cell = my_cells[i];
@@ -345,7 +345,7 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
         // read up to 4 refs
         const auto cnt_bits_i = len_in_bits(i);
         for (unsigned j = 0; j < my_cell->cnt_refs; j++) {
-            unsigned ref_id = buffer_bit.get_uint(cnt_bits_i);
+            unsigned ref_id = i - buffer_bit.get_uint(cnt_bits_i);
             buffer_bit.offs += cnt_bits_i;
             my_cell->refs[j] = ref_id;
             CHECK(ref_id < i);
@@ -469,6 +469,7 @@ std::string compress(
     }
     CHECK(!uncompressed_dict.empty());
     // S = LZ_compressor::compress(S, uncompressed_dict);
+    S = lz_compressor_bits::compress(S);
 
     if (return_before_huffman) {
         return to_string(S);
@@ -483,7 +484,10 @@ std::string decompress(const std::string &base64_data) {
     std::string data = td::base64_decode(base64_data).move_as_ok();
     std::basic_string<uint8_t> S(data.begin(), data.end());
     // S = huffman::decode_8(S);
+
     // S = LZ_compressor::decompress(S, uncompressed_dict);
+    S = lz_compressor_bits::decompress(S);
+
     td::Ref<vm::Cell> root = deserialise(S);
     td::BufferSlice serialised_properly = vm::std_boc_serialize(root, 31).move_as_ok();
     return base64_encode(serialised_properly);

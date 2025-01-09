@@ -114,6 +114,22 @@ inline void insert_bits_to_beginning(
 }
 
 inline void push_bit_range(
+    td::BitPtr &data,
+    td::BitPtr bit_ptr,
+    unsigned from,
+    unsigned cnt
+) {
+    bit_ptr.offs = from;
+    while (cnt > 0) {
+        unsigned cur_cnt = std::min(cnt, 64u);
+        data.store_uint(bit_ptr.get_uint(cur_cnt), cur_cnt);
+        data.offs += cur_cnt;
+        bit_ptr.offs += cur_cnt;
+        cnt -= cur_cnt;
+    }
+}
+
+inline void push_bit_range(
     std::basic_string<uint8_t> &data,
     unsigned &data_cnt_bits,
     td::BitPtr bit_ptr,
@@ -121,14 +137,7 @@ inline void push_bit_range(
     unsigned cnt
 ) {
     td::BitPtr data_bit_ptr(data.data(), data_cnt_bits);
-    bit_ptr.offs = from;
-    while (cnt > 0) {
-        unsigned cur_cnt = std::min(cnt, 64u);
-        data_bit_ptr.store_uint(bit_ptr.get_uint(cur_cnt), cur_cnt);
-        data_bit_ptr.offs += cur_cnt;
-        bit_ptr.offs += cur_cnt;
-        cnt -= cur_cnt;
-    }
+    push_bit_range(data_bit_ptr, bit_ptr, from, cnt);
     data_cnt_bits = data_bit_ptr.offs;
 }
 
@@ -166,6 +175,177 @@ struct Timer {
     }
 
     ~Timer() {
-        std::cout << name << ", Time: " << (clock() * 1.0 / CLOCKS_PER_SEC - start_time) << std::endl;
+        // std::cout << name << ", Time: " << (clock() * 1.0 / CLOCKS_PER_SEC - start_time) << std::endl;
     }
 };
+
+struct SparseTableMin {
+    explicit SparseTableMin() = default;
+
+    explicit SparseTableMin(const std::vector<unsigned> &values) {
+        const unsigned n = values.size();
+        const unsigned logn = len_in_bits(n);
+        min.assign(logn + 1, std::vector<unsigned>(n));
+
+        for (unsigned i = 0; i < n; ++i) {
+            min[0][i] = values[i];
+        }
+        for (unsigned pw = 1; pw <= logn; ++pw) {
+            for (unsigned i = 0; i < n; ++i) {
+                min[pw][i] = std::min(
+                    min[pw - 1][i],
+                    min[pw - 1][std::min(n - 1, i + (1u << (pw - 1)))]
+                );
+            }
+        }
+    }
+
+    // [l, r)
+    unsigned get_min(const unsigned l, const unsigned r) {
+        CHECK(l < r);
+        const unsigned pw = len_in_bits(r - l) - 1;
+        return std::min(min[pw][l], min[pw][r - (1u << pw)]);
+    }
+
+private:
+    std::vector<std::vector<unsigned> > min;
+};
+
+inline unsigned mod_n_fast(const unsigned x, const unsigned n) {
+    return (x >= n) ? (x - n) : x;
+}
+
+inline std::vector<unsigned> build_suff_arr(const std::basic_string<uint8_t> &s) {
+    const unsigned n = s.size();
+    std::vector<unsigned> p(n);
+
+    // Timer* timer = new Timer("build_suff_arr initial");
+    const unsigned MAX = *std::max_element(s.begin(), s.end());
+    const unsigned C = std::max(MAX + 1, n);
+
+    std::vector<unsigned> cnt(C, 0);
+    for (const auto &ch: s) {
+        ++cnt[ch];
+    }
+    for (unsigned i = 0; i + 1 < C; ++i) {
+        cnt[i + 1] += cnt[i];
+    }
+    for (unsigned i = 0; i < n; ++i) {
+        p[--cnt[s[i]]] = i;
+    }
+    // delete timer;
+
+    std::vector<unsigned> c(C);
+    unsigned cls = 1;
+    c[p[0]] = cls - 1;
+    for (unsigned i = 1; i < n; ++i) {
+        if (s[p[i]] != s[p[i - 1]]) {
+            ++cls;
+        }
+        c[p[i]] = cls - 1;
+    }
+
+    std::vector<unsigned> nc(C);
+    std::vector<unsigned> np(n);
+    for (unsigned len = 1; len <= n; len *= 2) {
+        // timer = new Timer(std::to_string(len));
+        std::fill(std::begin(cnt), std::begin(cnt) + cls, 0);
+        for (unsigned i = 0; i < n; ++i) {
+            ++cnt[c[i]];
+        }
+        for (unsigned i = 0; i + 1 < cls; ++i) {
+            cnt[i + 1] += cnt[i];
+        }
+        for (unsigned ii = 0; ii < n; ++ii) {
+            unsigned i = n - 1 - ii;
+            const unsigned j = p[i];
+            unsigned j2 = mod_n_fast(j + n - len, n);
+            np[--cnt[c[j2]]] = j2;
+        }
+        p = np;
+
+        cls = 1;
+        nc[p[0]] = cls - 1;
+        unsigned *p_i = p.data() + 1;
+        unsigned *p_i_prev = p.data();
+        for (unsigned i = 1; i < n; ++i) {
+            if (c[*p_i] != c[*p_i_prev] || c[mod_n_fast(*p_i + len, n)] != c[mod_n_fast(*p_i_prev + len, n)]) {
+                ++cls;
+            }
+            nc[p[i]] = cls - 1;
+            ++p_i;
+            ++p_i_prev;
+        }
+        c = nc;
+        // delete timer;
+    }
+
+    return p;
+}
+
+template<typename T>
+std::vector<unsigned> get_lcp_from_suff_arr(
+    const std::basic_string<T> &data,
+    const std::vector<unsigned> &p,
+    const std::vector<unsigned> &pos
+) {
+    const unsigned n = p.size();
+    // lcp[i] is lcp of p[i] and p[i + 1]
+    std::vector<unsigned> lcp(n, 0);
+    unsigned lcp_len = 0;
+    for (unsigned i = 0; i < n; ++i) {
+        const unsigned pi = pos[i];
+        if (pi == n - 1) {
+            continue;
+        }
+        const unsigned j = p[pi + 1];
+        lcp_len = std::min(lcp_len, n - j);
+        while (i + lcp_len < n && j + lcp_len < n && data[i + lcp_len] == data[j + lcp_len]) {
+            ++lcp_len;
+        }
+        lcp[pi] = lcp_len;
+        if (lcp_len > 0) {
+            --lcp_len;
+        }
+    }
+    return lcp;
+}
+
+std::basic_string<uint8_t> compress_lz_standard(const std::basic_string<uint8_t> &data) {
+    auto res = td::lz4_compress(td::BufferSlice(reinterpret_cast<const char *>(data.data()), data.size()));
+    return {reinterpret_cast<const uint8_t *>(res.data()), res.size()};
+}
+
+std::basic_string<uint8_t> decompress_lz_standard(const std::basic_string<uint8_t> &data) {
+    auto res = td::lz4_decompress(
+        td::BufferSlice(reinterpret_cast<const char *>(data.data()), data.size()),
+        2 << 20
+    ).move_as_ok();
+    return {reinterpret_cast<const uint8_t *>(res.data()), res.size()};
+}
+
+// 1 in the highest bit which is not used
+inline unsigned get_min_bit_str_not_in(const std::basic_string<uint8_t> &bits) {
+    CHECK(!bits.empty());
+    std::vector<char> was(bits.size() * 2, 0);
+    for (uint8_t len = 1; len <= bits.size(); ++len) {
+        std::fill(std::begin(was), was.begin() + (1u << len), 0);
+        unsigned cur = 0;
+        const unsigned cover_mask = (1u << len) - 1;
+        for (unsigned i = 0; i < len; ++i) {
+            cur = cur * 2 + bits[i];
+        }
+        was[cur] = 1;
+        for (unsigned i = len; i < bits.size(); ++i) {
+            cur = (cur * 2 + bits[i]) & cover_mask;
+            was[cur] = 1;
+        }
+        for (unsigned mask = 0; mask < (1u << len); ++mask) {
+            if (!was[mask]) {
+                return (1u << len) ^ mask;
+            }
+        }
+    }
+    CHECK(false);
+    return -1u;
+}

@@ -4,7 +4,11 @@ project(MaraTON)
 set(CMAKE_CXX_STANDARD 17)
 
 function(setup_target target_name source_file)
-    add_executable(${target_name} ${source_file} utils.h compressor.hpp huffman.hpp serializator.hpp dictionary.hpp rANS.hpp)
+    add_executable(
+            ${target_name} ${source_file}
+            utils.h compressor.hpp huffman.hpp serializator.hpp
+            dictionary.hpp rANS.hpp lz_compressor_bits.hpp
+    )
     target_include_directories(${target_name} PRIVATE
             include include/crypto include/tdutils include/ton include/common
     )

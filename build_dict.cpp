@@ -18,6 +18,7 @@ int main() {
         if (line.empty() || line[0] != '1') {
             continue;
         }
+        // Timer timer("suff auto");auto
         line = pref + line;
         // std::cout << "Found file = " << line << std::endl;
         std::ifstream cur_file(line);
@@ -44,6 +45,7 @@ int main() {
         std::cout << "training on " << line << ", " << S.size() << " bytes, total bytes = " << total_bytes << std::endl;
         dict.add_training_data(S);
 
+        break;
         // if (total_bytes >= 6 * int(1e6)) {
         //     break;
         // }
