@@ -8,7 +8,7 @@ function(setup_target target_name source_file)
             ${target_name} ${source_file}
             utils.h compressor.hpp huffman.hpp serializator.hpp
             dictionary.hpp rANS.hpp lz_compressor_bits.hpp
-            suff_aut_bits.hpp
+            suff_aut.hpp utils_local.hpp
     )
     target_include_directories(${target_name} PRIVATE
             include include/crypto include/tdutils include/ton include/common

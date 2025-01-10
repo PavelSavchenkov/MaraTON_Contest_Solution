@@ -15,6 +15,9 @@ def dfs(filename):
 
     ans = ""
     for line in file.readlines():
+        if len(ans) == 0:
+            if "LOCAL" in line:
+                return ""
         if "#pragma once" in line:
             continue
         if line.startswith("#include") and "<" not in line and "/" not in line:

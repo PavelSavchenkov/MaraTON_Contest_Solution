@@ -4,6 +4,7 @@
 #include "huffman.hpp"
 #include "utils.h"
 #include "vm/excno.hpp"
+#include "utils_local.hpp"
 
 std::set<const vm::Cell *> was;
 std::map<td::uint8, unsigned> cnt_type;

@@ -1,3 +1,5 @@
+// LOCAL
+
 #pragma once
 
 #include <map>
@@ -8,52 +10,37 @@
 #include <algorithm>
 
 #include "utils.h"
+#include "suff_aut.hpp"
 
-struct Dictionary {
-    explicit Dictionary() {
-        root = new_node();
-        last = root;
-    }
+template<unsigned C>
+struct Dictionary : SuffAutBase<C> {
+    using SuffAutBase<C>::add_c;
+    using SuffAutBase<C>::nodes;
+    using SuffAutBase<C>::root;
+    using SuffAutBase<C>::last;
 
-    void add_training_data(const std::basic_string<uint8_t> &data) {
-        for (const auto &c: data) {
+    explicit Dictionary() : SuffAutBase<C>() {};
+
+    void add_training_data(const std::basic_string<uint8_t>& data) {
+        // if (training_strings.size() >= 5) {
+        //     return;
+        // }
+
+        for (const auto c: data) {
             add_c(c);
         }
         training_strings.push_back(data);
-
-        // check suff tree depth
-        {
-            Timer timer("Traverse suff tree");
-            unsigned sum_depth = 0;
-            unsigned v = root;
-            unsigned sum_func = 0;
-            for (const auto &c: data) {
-                v = nodes[v].to.at(c);
-
-                unsigned cur_depth = 0;
-                unsigned u = v;
-                unsigned func = 0;
-                while (u != root) {
-                    func = std::max(func, nodes[u].len);
-                    u = nodes[u].link;
-                    CHECK(u != -1u);
-                    ++cur_depth;
-                }
-                sum_depth += cur_depth;
-                sum_func += func;
-            }
-            std::cout << "suff tree sum depth: " << sum_depth << std::endl;
-            std::cout << "suff tree avg depth: " << sum_depth * 1.0 / data.size() << std::endl;
-            std::cout << "suff tree sum_func: " << sum_func << std::endl;
-        }
     }
 
-    std::basic_string<uint8_t> build_dict(const unsigned max_size) {
+    std::basic_string<uint8_t> build_dict(
+        const unsigned max_dict_size,
+        const unsigned min_match_length
+    ) {
         const unsigned n = nodes.size();
-        CHECK(n > 1);
+        CHECK(n >= training_strings.size());
 
-        std::vector<unsigned> top_sort(n);
-        std::iota(top_sort.begin(), top_sort.end(), 0);
+        std::vector<unsigned> top_sort(n - 1);
+        std::iota(top_sort.begin(), top_sort.end(), 1);
         std::sort(
             top_sort.begin(),
             top_sort.end(),
@@ -62,73 +49,139 @@ struct Dictionary {
             }
         );
         CHECK(top_sort[0] == last);
+        CHECK(top_sort.back() == root);
 
         std::cout << "top sort ready" << std::endl;
 
+        // cnt occurrences == number of paths to the last character in the training data
+        std::vector<unsigned> cnt_occured(n, 0);
+        // all suffix states
+        {
+            unsigned v = last;
+            while (v != root) {
+                cnt_occured[v] = 1;
+                v = nodes[v].link;
+            }
+        }
+        for (const auto v: top_sort) {
+            for (unsigned c = 0; c < C; ++c) {
+                const unsigned to = nodes[v].to[c];
+                if (to) {
+                    CHECK(nodes[to].len > nodes[v].len);
+                    cnt_occured[v] += cnt_occured[to];
+                }
+            }
+            CHECK(cnt_occured[v] <= n);
+            CHECK(cnt_occured[v] > 0);
+        }
+
+        std::cout << "cnt_occured ready" << std::endl;
+
         std::vector<std::vector<unsigned> > rev_to(n);
-        for (unsigned v = 0; v < n; v++) {
-            for (const auto &it: nodes[v].to) {
-                unsigned to = it.second;
-                rev_to[to].push_back(v);
+        for (unsigned v = 1; v < n; v++) {
+            for (unsigned c = 0; c < C; ++c) {
+                if (nodes[v].to[c]) {
+                    rev_to[nodes[v].to[c]].push_back(v);
+                }
             }
         }
 
         std::cout << "rev_to ready" << std::endl;
 
-        // cnt occurrences == number of paths to the last character in the training data
-        std::vector<unsigned> cnt_occured(n, 0);
-        cnt_occured[last] = 1;
-        for (unsigned i = 1; i < n; ++i) {
-            const unsigned v = top_sort[i];
-            for (const auto &it: nodes[v].to) {
-                const unsigned to = it.second;
-                cnt_occured[v] += cnt_occured[to];
-            }
-        }
+        const auto restore_longest_str_for_v = [&](unsigned v) {
+            std::basic_string<uint8_t> s;
+            const unsigned initial_v = v;
+            while (v != root) {
+                unsigned from = 0;
+                for (const auto from_: rev_to[v]) {
+                    if (nodes[v].len == nodes[from_].len + 1) {
+                        from = from_;
+                    }
+                }
+                CHECK(from != 0);
 
-        std::cout << "cnt_occured ready" << std::endl;
+                uint8_t ch{};
+                bool found_ch = false;
+                for (unsigned c = 0; c < C; ++c) {
+                    if (nodes[from].to[c] == v) {
+                        found_ch = true;
+                        ch = c;
+                        break;
+                    }
+                }
+                CHECK(found_ch);
+
+                s += ch;
+                v = from;
+            }
+            std::reverse(s.begin(), s.end());
+            CHECK(s.size() == nodes[initial_v].len);
+            return s;
+        };
 
         // in how many distinct strings from the training set the substring is occurred
         std::vector<unsigned> cnt_diff_strings(n, 0);
-        cnt_diff_strings[root] = training_strings.size();
-        for (const auto &data: training_strings) {
-            std::unordered_set<unsigned> marked;
-            std::queue<unsigned> q;
+        std::vector<unsigned> last_marked(n, -1u);
+        std::vector<unsigned> q(n);
+        for (unsigned it = 0; it < training_strings.size(); ++it) {
+            const auto& data = training_strings[it];
+            unsigned ql = 0;
+            unsigned qr = 0;
             unsigned v = root;
-            for (const auto &ch: data) {
-                CHECK(nodes[v].to.count(ch));
+            for (const auto ch: data) {
                 v = nodes[v].to[ch];
-                q.push(v);
+                CHECK(v);
+                q[qr++] = v;
                 ++cnt_diff_strings[v];
-                marked.insert(v);
+                CHECK(last_marked[v] != it);
+                last_marked[v] = it;
             }
-            while (!q.empty()) {
-                v = q.front();
-                q.pop();
+            while (ql < qr) {
+                v = q[ql++];
 
-                if (nodes[v].link != -1u && !marked.count(nodes[v].link)) {
-                    q.push(nodes[v].link);
-                    ++cnt_diff_strings[nodes[v].link];
-                    marked.insert(nodes[v].link);
-                }
-
-                for (const auto from: rev_to[v]) {
-                    if (!marked.count(from)) {
-                        q.push(from);
-                        ++cnt_diff_strings[from];
-                        marked.insert(from);
-                    }
+                const auto u = nodes[v].link;
+                if (u && last_marked[u] != it) {
+                    q[qr++] = u;
+                    ++cnt_diff_strings[u];
+                    last_marked[u] = it;
                 }
             }
         }
 
-        std::cout << "cnt_diff_strings ready" << std::endl;
+        // const auto all_data = restore_longest_str_for_v(last);
+        for (unsigned v = 2; v < n; ++v) {
+            // const auto v_str = restore_longest_str_for_v(v);
+            // unsigned real_cnt_diff = 0;
+            // for (const auto& data : training_strings) {
+            //     unsigned cur = cnt_occurrences(v_str, data);
+            //     real_cnt_diff += (cur > 0);
+            // }
+            // unsigned real_cnt_occured = cnt_occurrences(v_str, all_data);
+            // std::cout << "check v=" << v << ", len=" << nodes[v].len << std::endl;
+            // if (real_cnt_occured != cnt_occured[v] || real_cnt_diff != cnt_diff_strings[v]) {
+            //     std::cout << "bad v=" << v << ", len=" << nodes[v].len << std::endl;
+            //     std::cout << "cnt_diff_strings[v]=" << cnt_diff_strings[v] << std::endl;
+            //     std::cout << "cnt_occured[v]=" << cnt_occured[v] << std::endl;
+            //     std::cout << "v_str=" << to_string(v_str) << std::endl;
+            //     std::cout << "real_cnt_occured=" << real_cnt_occured << std::endl;
+            //     std::cout << "real_cnt_diff=" << real_cnt_diff << std::endl;
+            //     exit(0);
+            // }
+            // CHECK(real_cnt_occured == cnt_occured[v]);
+            // CHECK(real_cnt_diff == cnt_diff_strings[v]);
+            CHECK(cnt_diff_strings[v] <= cnt_occured[v]);
+        }
 
         std::vector<unsigned> candidates;
-        for (unsigned v = 0; v < n; v++) {
-            if (nodes[v].len >= 4 && nodes[v].len <= max_size && cnt_occured[v] > 1) {
+        for (unsigned v = 1; v < n; v++) {
+            if (
+                nodes[v].len >= min_match_length &&
+                nodes[v].len <= max_dict_size
+                && cnt_diff_strings[v] > training_strings.size() / 2
+            ) {
                 candidates.push_back(v);
             }
+            // std::cout << "v=" << v << ", nodes[v].len=" << nodes[v].len << ", cnt_occured=" << cnt_occured[v] << std::endl;
         }
         std::sort(
             candidates.begin(),
@@ -151,7 +204,7 @@ struct Dictionary {
             }
         );
 
-        std::cout << "sorted candidates ready" << std::endl;
+        std::cout << "sorted candidates ready, cnt=" << candidates.size() << std::endl;
 
         std::set<unsigned> dict_v;
         std::vector<char> killed(n, false);
@@ -159,70 +212,37 @@ struct Dictionary {
         unsigned sum_len = 0;
         unsigned cnt_processed_candidates = 0;
         for (const auto candidate: candidates) {
-            if (killed[candidate]) {
+            if (killed[candidate] || nodes[candidate].len + sum_len > max_dict_size) {
                 continue;
             }
-            if (nodes[candidate].len + sum_len > max_size) {
-                continue;
-            }
+            sum_len += nodes[candidate].len;
 
-            std::set<unsigned int> to_kill;
-            // set of substrings of the candidate which are not already killed, but will be if cand is taken
-            {
-                std::queue<unsigned> q;
-                q.push(candidate);
+            unsigned ql = 0;
+            unsigned qr = 0;
+            q[qr++] = candidate;
+            while (ql < qr) {
+                const unsigned v = q[ql++];
 
-                auto try_push = [&](unsigned v) {
-                    if (v != -1u && !to_kill.count(v) && !killed[v]) {
-                        to_kill.insert(v);
-                        q.push(v);
+                const auto try_kill = [&](const unsigned u) {
+                    if (u && !killed[u]) {
+                        if (in_dict[u]) {
+                            dict_v.erase(u);
+                            sum_len -= nodes[u].len;
+                            in_dict[u] = false;
+                        }
+                        killed[u] = true;
+                        q[qr++] = u;
                     }
                 };
 
-                while (!q.empty()) {
-                    const unsigned v = q.front();
-                    q.pop();
-
-                    try_push(nodes[v].link);
-                    for (const auto from: rev_to[v]) {
-                        try_push(from);
-                    }
+                try_kill(nodes[v].link);
+                for (const auto from: rev_to[v]) {
+                    try_kill(from);
                 }
             }
 
-            unsigned new_sum_len = sum_len + nodes[candidate].len;
-            for (const auto v: to_kill) {
-                if (in_dict[v]) {
-                    CHECK(nodes[v].len <= new_sum_len);
-                    new_sum_len -= nodes[v].len;
-                }
-            }
-            if (new_sum_len <= max_size) {
-                in_dict[candidate] = true;
-                dict_v.insert(candidate);
-                for (const auto v: to_kill) {
-                    killed[v] = true;
-                    if (in_dict[v]) {
-                        in_dict[v] = false;
-                        dict_v.erase(v);
-                    }
-                }
-                sum_len = new_sum_len;
-                std::cout << "ADDED DICT: " << "len=" << nodes[candidate].len
-                        << ", cnt_diff=" << cnt_diff_strings[candidate] << std::endl;
-            } else {
-                std::cout << "NOT added, new_sum_len=" << new_sum_len << ", sum_len=" << sum_len << ", ";
-                std::cout << "len=" << nodes[candidate].len
-                        << ", cnt_diff=" << cnt_diff_strings[candidate] << std::endl;
-            }
-            // std::cout << "cur_strs_in_dict = " << dict_v.size() << std::endl;
-            // std::cout << "cand len = " << nodes[candidate].len << ", cand cnt = " << cnt_occured[candidate] << std::endl;
-            // std::cout << "them: ";
-            // for (const auto v : dict_v) {
-            //     std::cout << "(len=" << nodes[v].len << ", cnt=" << cnt_occured[v] << ") ";
-            // }
-            // std::cout << "\n---" << std::endl;
-
+            in_dict[candidate] = true;
+            dict_v.insert(candidate);
             ++cnt_processed_candidates;
             if (cnt_processed_candidates % 500 == 0) {
                 std::cout << "cnt_processed_candidates = " << cnt_processed_candidates
@@ -230,40 +250,7 @@ struct Dictionary {
                 std::cout << ", dict_v.size() = " << dict_v.size() << std::endl;
             }
         }
-        CHECK(sum_len <= max_size);
-
-        const auto restore_longest_str_for_v = [&](unsigned v) {
-            std::basic_string<uint8_t> s;
-            const unsigned initial_v = v;
-            while (v != root) {
-                unsigned from = -1u;
-                for (const auto from_: rev_to[v]) {
-                    if (nodes[v].len == nodes[from_].len + 1) {
-                        from = from_;
-                    }
-                }
-                CHECK(from != -1u);
-
-                uint8_t ch{};
-                bool found_ch = false;
-                for (const auto &it: nodes[from].to) {
-                    if (it.second == v) {
-                        found_ch = true;
-                        ch = it.first;
-                        break;
-                    }
-                }
-                CHECK(found_ch);
-
-                s += ch;
-                v = from;
-            }
-            std::reverse(s.begin(), s.end());
-            CHECK(s.size() == nodes[initial_v].len);
-            return s;
-        };
-
-        const auto all_data = restore_longest_str_for_v(last);
+        CHECK(sum_len <= max_dict_size);
 
         std::cout << "cur_strs_in_dict = " << dict_v.size() << std::endl;
         std::basic_string<uint8_t> out;
@@ -278,64 +265,18 @@ struct Dictionary {
             // }
             // outs.push_back(cur);
         }
-        for (const unsigned v: dict_v) {
-            std::cout << "DICT: " << "len=" << nodes[v].len << ", cnt_diff=" << cnt_diff_strings[v] << std::endl;
+        for (unsigned it = 0; it < candidates.size(); ++it) {
+            const auto v = candidates[candidates.size() - 1 - it];
+            if (!in_dict[v]) {
+                continue;
+            }
+            std::cout << "DICT: " << "len=" << nodes[v].len << ", cnt_diff=" << cnt_diff_strings[v]
+                    << ", cnt_occur=" << cnt_occured[v] << std::endl;
         }
         CHECK(out.size() == sum_len);
         return out;
     }
 
 private:
-    struct Node {
-        std::map<uint8_t, unsigned> to;
-        unsigned link{-1u};
-        unsigned len{};
-
-        explicit Node() = default;
-    };
-
-    unsigned new_node() {
-        nodes.emplace_back();
-        return nodes.size() - 1;
-    }
-
-    unsigned new_node(Node from) {
-        unsigned idx = new_node();
-        nodes[idx] = from;
-        return idx;
-    }
-
-    void add_c(uint8_t c) {
-        // std::cout << "add c = " << int(c) << std::endl;
-        unsigned cur = new_node();
-        nodes[cur].len = nodes[last].len + 1;
-        unsigned p = last;
-        last = cur;
-        for (; p != -1u && !nodes[p].to.count(c); p = nodes[p].link) {
-            nodes[p].to[c] = cur;
-        }
-
-        if (p == -1u) {
-            nodes[cur].link = root;
-            return;
-        }
-
-        unsigned q = nodes[p].to[c];
-        if (nodes[q].len == nodes[p].len + 1) {
-            nodes[cur].link = q;
-            return;
-        }
-
-        unsigned clone = new_node(nodes[q]);
-        nodes[clone].len = nodes[p].len + 1;
-        nodes[cur].link = nodes[q].link = clone;
-        for (; p != -1u && nodes[p].to.count(c) && nodes[p].to[c] == q; p = nodes[p].link) {
-            nodes[p].to[c] = clone;
-        }
-    }
-
-    std::vector<Node> nodes;
     std::vector<std::basic_string<uint8_t> > training_strings;
-    unsigned last{-1u};
-    unsigned root{-1u};
 };

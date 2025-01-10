@@ -1,41 +1,24 @@
 #pragma once
 #include "utils.h"
-#include "suff_aut_bits.hpp"
+#include "suff_aut.hpp"
 
 namespace lz_compressor_bits {
 static const unsigned MIN_MATCH_LENGTH = 42; //32; 4 * 8;
 static const unsigned LITERAL_LENGTH_BITS_BLOCK = 9;
 static const unsigned MATCH_LENGTH_BITS_BLOCK = 8;
 
-std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_bytes) {
-    std::basic_string<uint8_t> input_bits(input_bytes.size() * 8, 0);
-    for (unsigned i = 0; i < input_bits.size(); ++i) {
-        input_bits[i] = ((input_bytes[i / 8] >> (7 - i % 8)) & 1);
-    }
-    td::ConstBitPtr input_bits_ptr(input_bytes.data(), 0);
-    // for (unsigned i = 0; i < input_bytes.size() * 8; ++i) {
-    //     bool bit = input_bits_ptr.get_uint(1);
-    //     input_bits_ptr.offs += 1;
-    //     CHECK(bit == input_bits[i]);
-    // }
-
-    // check for potential stop symbol
-    // {
-    //     auto stop_symbol = get_min_bit_str_not_in(input_bits);
-    //     std::cout << "stop symbol bit string, len= " << int(len_in_bits(stop_symbol)) << ", symbol=";
-    //     for (unsigned i = len_in_bits(stop_symbol); i > 0; --i) {
-    //         std::cout << ((stop_symbol >> (i - 1)) & 1);
-    //     }
-    //     std::cout << std::endl;
-    // }
+std::basic_string<uint8_t> compress(
+    const std::basic_string<uint8_t>& input_bytes,
+    const std::basic_string<uint8_t>& dict = {}
+) {
+    const auto input_bits = bytes_str_to_bit_str(dict + input_bytes);
 
     const unsigned n = input_bits.size();
     std::vector<unsigned> best_match_suff(n, -1);
     std::vector<unsigned> best_match_len(n, 0);
     // suff aut
     {
-        Timer timer("End2end matches with suff automaton");
-        SuffAutBits<2> suff_aut_bits(input_bits);
+        SuffAut<2> suff_aut_bits(input_bits);
         suff_aut_bits.build_matches(best_match_suff, best_match_len, MIN_MATCH_LENGTH);
     }
 
@@ -60,28 +43,28 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_byte
 
     // Push serialization bits
     {
-        Timer timer("Push serialization bits");
+        const unsigned start_index = dict.size() * 8;
         unsigned sum_length_matches = 0;
         unsigned bits_spent_on_literal_tokens = 0;
         unsigned bits_spent_on_match_len_tokens = 0;
         unsigned bits_spent_on_match_offset_tokens = 0;
-        unsigned last_literal_start = 0;
+        unsigned last_literal_start = start_index;
         std::set<unsigned> suff_referenced;
         unsigned sum_literal_lengths = 0;
         unsigned cnt_references = 0;
         std::vector<unsigned> match_lengths{};
-        for (unsigned i = 0; i < n;) {
+        for (unsigned i = start_index; i < n;) {
             auto match_len = best_match_len[i];
             if (match_len >= MIN_MATCH_LENGTH) {
                 // naive check of the match
-                {
-                    unsigned from = best_match_suff[i];
-                    unsigned to = i;
-                    for (unsigned it = 0; it < match_len; ++it) {
-                        CHECK(input_bits[from + it] == input_bits[to + it]);
-                    }
-                    CHECK(input_bits[from + match_len] != input_bits[to + match_len]);
-                }
+                // {
+                //     unsigned from = best_match_suff[i];
+                //     unsigned to = i;
+                //     for (unsigned it = 0; it < match_len; ++it) {
+                //         CHECK(input_bits[from + it] == input_bits[to + it]);
+                //     }
+                //     CHECK(input_bits[from + match_len] != input_bits[to + match_len]);
+                // }
                 sum_length_matches += match_len;
                 suff_referenced.insert(best_match_suff[i]);
                 cnt_references += 1;
@@ -140,7 +123,10 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_byte
     return {output_bits.ptr, static_cast<size_t>(output_bits.offs + 7) / 8};
 }
 
-std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
+std::basic_string<uint8_t> decompress(
+    const std::basic_string<uint8_t>& data,
+    const std::basic_string<uint8_t>& dict = {}
+) {
     td::ConstBitPtr data_bits(data.data(), 0);
 
     unsigned n_bits = data.size() * 8;
@@ -167,7 +153,8 @@ std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
     };
 
     std::basic_string<uint8_t> output_bytes(2 << 20, 0);
-    td::BitPtr output_bits(output_bytes.data(), 0);
+    output_bytes = dict + output_bytes;
+    td::BitPtr output_bits(output_bytes.data(), dict.size() * 8);
     while (data_bits.offs < n_bits) {
         const auto literal_len = get_number_as_blocks(LITERAL_LENGTH_BITS_BLOCK);
 
@@ -215,6 +202,6 @@ std::basic_string<uint8_t> decompress(const std::basic_string<uint8_t> &data) {
     std::basic_string<uint8_t> output{
         output_bits.ptr, static_cast<size_t>(output_bits.offs / 8)
     };
-    return output;
+    return output.substr(dict.size());
 }
 }

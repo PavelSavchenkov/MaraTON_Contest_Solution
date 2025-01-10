@@ -10,7 +10,7 @@ int main() {
     const std::string pref = "/Users/pavel/Programming/MaraTON/ton-sample-tests/";
     const std::string files_names_file = pref + "file_list.txt";
 
-    Dictionary dict;
+    Dictionary<2> dict{};
     unsigned total_bytes = 0;
     std::ifstream files_names(files_names_file);
     std::string line;
@@ -18,7 +18,7 @@ int main() {
         if (line.empty() || line[0] != '1') {
             continue;
         }
-        // Timer timer("suff auto");auto
+        // Timer timer("suff auto");
         line = pref + line;
         // std::cout << "Found file = " << line << std::endl;
         std::ifstream cur_file(line);
@@ -30,32 +30,28 @@ int main() {
         cur_file >> base64_data;
         CHECK(!base64_data.empty());
 
-        const auto S_ = Serializator::compress(base64_data, false, true);
-        std::basic_string<uint8_t> S(reinterpret_cast<const uint8_t *>(S_.data()), S_.size());
+        const auto S_bytes = Serializator::compress(base64_data, false, true);
+        // std::basic_string<uint8_t> S_bytes;
+        // S_bytes.push_back(125);
+        const auto S_bits = bytes_str_to_bit_str(S_bytes);
+        // std::basic_string<uint8_t> S_bits{1, 0, 1};
 
-        std::basic_string<uint8_t> S_bits;
-        td::BitPtr bits(S.data(), 0);
-        for (unsigned it = 0; it < S.size() * 8; ++it) {
-            S_bits.push_back(bits.get_uint(1));
-            bits.offs += 1;
-        }
-        S = S_bits;
-
-        total_bytes += S.size();
-        std::cout << "training on " << line << ", " << S.size() << " bytes, total bytes = " << total_bytes << std::endl;
-        dict.add_training_data(S);
-
-        break;
-        // if (total_bytes >= 6 * int(1e6)) {
-        //     break;
-        // }
+        total_bytes += (S_bits.size() + 7) / 8;
+        std::cout << "training on " << line << ", " << S_bits.size()
+                << " bits, total bytes = " << total_bytes << std::endl;
+        dict.add_training_data(S_bits);
     }
 
-    std::basic_string<uint8_t> dict_bytes = dict.build_dict((1 << 16) * 8);
-    std::cout << "dict length in bytes: " << dict_bytes.size() << std::endl;
+    const auto dict_bits = dict.build_dict(
+        (1 << 19),
+        lz_compressor_bits::MIN_MATCH_LENGTH
+    );
+    std::cout << "dict length in bits: " << dict_bits.size() << std::endl;
 
-    std::basic_string<uint8_t> dict_lz = LZ_compressor::compress(dict_bytes, {});
-    std::cout << "dict length after lz compression: " << dict_lz.size() << std::endl;
+    // const auto dict_packed = pack_expanded_bits_to_bytes<std::basic_string<uint8_t> >();
+
+    std::basic_string<uint8_t> dict_lz = lz_compressor_bits::compress(dict_bits, {});
+    std::cout << "dict length (bytes) after lz compression: " << dict_lz.size() << std::endl;
 
     std::string dict_base64 = td::base64_encode(
         td::BufferSlice(reinterpret_cast<const char *>(dict_lz.data()), dict_lz.size())

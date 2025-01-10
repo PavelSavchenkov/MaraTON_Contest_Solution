@@ -1,3 +1,4 @@
+// LOCAL
 #pragma once
 
 #include <numeric>
@@ -5,8 +6,9 @@
 #include <string>
 #include <td/utils/check.h>
 
-#include "suff_aut_bits.hpp"
+#include "suff_aut.hpp"
 #include "utils.h"
+#include "utils_local.hpp"
 
 namespace LZ_compressor {
 static const unsigned MATCH_LENGHT_OFFSET = 4;
@@ -61,7 +63,7 @@ std::basic_string<uint8_t> compress(
     // suff aut
     {
         Timer timer("End2end matches with suff automaton");
-        SuffAutBits<256> suff_aut_bits(data);
+        SuffAut<256> suff_aut_bits(data);
         suff_aut_bits.build_matches(best_offset,best_len, MATCH_LENGHT_OFFSET);
         for (unsigned i = 0; i < n; ++i) {
             if (best_offset[i] != -1u) {

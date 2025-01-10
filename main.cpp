@@ -14,22 +14,6 @@
 #include "huffman.hpp"
 #include "serializator.hpp"
 
-td::BufferSlice compress(td::Slice data) {
-    td::Ref<vm::Cell> root = vm::std_boc_deserialize(data).move_as_ok();
-
-    // td::Result<vm::Cell::LoadedCell> loadedRootResult = root->load_cell();
-    // vm::Cell::LoadedCell loadedRoot = loadedRootResult.move_as_ok();
-    // std::cout << "Refs Cnt = " << loadedRoot.data_cell->get_refs_cnt() << std::endl;
-
-    td::BufferSlice serialized = vm::std_boc_serialize(root, 2).move_as_ok();
-    return td::lz4_compress(serialized);
-}
-
-td::BufferSlice decompress(td::Slice data) {
-    td::BufferSlice serialized = td::lz4_decompress(data, 2 << 20).move_as_ok();
-    auto root = vm::std_boc_deserialize(serialized).move_as_ok();
-    return vm::std_boc_serialize(root, 31).move_as_ok();
-}
 
 int main() {
     std::string mode;
