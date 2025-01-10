@@ -20,6 +20,32 @@ struct Dictionary {
             add_c(c);
         }
         training_strings.push_back(data);
+
+        // check suff tree depth
+        {
+            Timer timer("Traverse suff tree");
+            unsigned sum_depth = 0;
+            unsigned v = root;
+            unsigned sum_func = 0;
+            for (const auto &c: data) {
+                v = nodes[v].to.at(c);
+
+                unsigned cur_depth = 0;
+                unsigned u = v;
+                unsigned func = 0;
+                while (u != root) {
+                    func = std::max(func, nodes[u].len);
+                    u = nodes[u].link;
+                    CHECK(u != -1u);
+                    ++cur_depth;
+                }
+                sum_depth += cur_depth;
+                sum_func += func;
+            }
+            std::cout << "suff tree sum depth: " << sum_depth << std::endl;
+            std::cout << "suff tree avg depth: " << sum_depth * 1.0 / data.size() << std::endl;
+            std::cout << "suff tree sum_func: " << sum_func << std::endl;
+        }
     }
 
     std::basic_string<uint8_t> build_dict(const unsigned max_size) {

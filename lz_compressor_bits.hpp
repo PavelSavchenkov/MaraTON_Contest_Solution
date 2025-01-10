@@ -1,5 +1,6 @@
 #pragma once
 #include "utils.h"
+#include "suff_aut_bits.hpp"
 
 namespace lz_compressor_bits {
 static const unsigned MIN_MATCH_LENGTH = 42; //32; 4 * 8;
@@ -12,11 +13,11 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_byte
         input_bits[i] = ((input_bytes[i / 8] >> (7 - i % 8)) & 1);
     }
     td::ConstBitPtr input_bits_ptr(input_bytes.data(), 0);
-    for (unsigned i = 0; i < input_bytes.size() * 8; ++i) {
-        bool bit = input_bits_ptr.get_uint(1);
-        input_bits_ptr.offs += 1;
-        CHECK(bit == input_bits[i]);
-    }
+    // for (unsigned i = 0; i < input_bytes.size() * 8; ++i) {
+    //     bool bit = input_bits_ptr.get_uint(1);
+    //     input_bits_ptr.offs += 1;
+    //     CHECK(bit == input_bits[i]);
+    // }
 
     // check for potential stop symbol
     // {
@@ -29,75 +30,13 @@ std::basic_string<uint8_t> compress(const std::basic_string<uint8_t> &input_byte
     // }
 
     const unsigned n = input_bits.size();
-    std::vector<unsigned> p; {
-        Timer timer("suff_arr");
-        p = build_suff_arr(input_bits);
-    }
-
-    std::vector<unsigned> pos(n);
-    for (unsigned i = 0; i < n; ++i) {
-        pos[p[i]] = i;
-    }
-    std::vector<unsigned> lcp; {
-        Timer timer("lcp");
-        lcp = get_lcp_from_suff_arr(
-            input_bits,
-            p,
-            pos
-        );
-    }
-
-    SparseTableMin table_min; {
-        Timer timer("table_min");
-        table_min = SparseTableMin(lcp);
-    }
-
-    const auto get_lcp_pos = [&](unsigned pi, unsigned pj) {
-        if (pi > pj) {
-            std::swap(pi, pj);
-        }
-        return table_min.get_min(pi, pj);
-    };
-
-    // TODO: add segm tree max
-    // TODO: add treap
-
-    std::vector<unsigned> best_match_suff(n, -1u);
+    std::vector<unsigned> best_match_suff(n, -1);
     std::vector<unsigned> best_match_len(n, 0);
-    std::set<unsigned> alive_pos; {
-        Timer timer("Build best matches");
-        for (unsigned i = 0; i < n; ++i) {
-            // static const unsigned bound = 1u << 20;
-            // if (i >= bound) {
-            //     alive_pos.erase(pos[i - bound]);
-            // }
-            const auto pos_i = pos[i];
-            auto it = alive_pos.upper_bound(pos_i);
-            for (unsigned phase = 0; phase < 2; ++phase) {
-                if (phase == 1) {
-                    if (it != alive_pos.begin()) {
-                        --it;
-                    } else {
-                        continue;
-                    }
-                }
-                if (it == alive_pos.end()) {
-                    continue;
-                }
-                const auto pos_j = *it;
-                const auto match_len = get_lcp_pos(pos_i, pos_j);
-                if (match_len < MIN_MATCH_LENGTH) {
-                    continue;
-                }
-                if (match_len > best_match_len[i]) {
-                    best_match_len[i] = match_len;
-                    const auto j = p[pos_j];
-                    CHECK(j < i);
-                    best_match_suff[i] = j;
-                }
-            }
-            alive_pos.insert(pos_i);
-        }
+    // suff aut
+    {
+        Timer timer("End2end matches with suff automaton");
+        SuffAutBits<2> suff_aut_bits(input_bits);
+        suff_aut_bits.build_matches(best_match_suff, best_match_len, MIN_MATCH_LENGTH);
     }
 
     std::basic_string<uint8_t> output_bytes(n / 8 + 1, 0);

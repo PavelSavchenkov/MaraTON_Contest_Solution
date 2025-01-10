@@ -5,6 +5,7 @@
 #include <string>
 #include <td/utils/check.h>
 
+#include "suff_aut_bits.hpp"
 #include "utils.h"
 
 namespace LZ_compressor {
@@ -53,77 +54,18 @@ std::basic_string<uint8_t> compress(
     }
 
     // -----------------------------------------------
-    // build suff arr and precalc stuff for further dp
-    std::vector<unsigned> p{};
-    std::vector<unsigned> pos{};
     const unsigned n = data.size();
-
-    // sort cyclic shifts
-    p = build_suff_arr(data);
-
-    pos.resize(n);
-    for (unsigned i = 0; i < n; ++i) {
-        pos[p[i]] = i;
-    }
-    const auto lcp = get_lcp_from_suff_arr(data, p, pos);
-    const auto get_lcp_loop = [&](unsigned j, unsigned i) -> unsigned {
-        j = p[j];
-        i = p[i];
-        unsigned len = 0;
-        while (i + len < n && j + len < n && data[i + len] == data[j + len]) {
-            ++len;
-        }
-        return len;
-    };
-    SparseTableMin sparse_table(lcp);
-    const auto get_lcp_fast = [&](unsigned j, unsigned i) -> unsigned {
-        if (i > j) {
-            std::swap(i, j);
-        }
-        const auto res = sparse_table.get_min(i, j);
-        return res;
-    };
 
     std::vector<unsigned> best_len(n + 1, 0);
     std::vector<unsigned> best_offset(n, -1u);
-    std::set<unsigned> alive;
-    const unsigned ITERS = n > (1 << 16) ? 10 : 50;
-    for (unsigned i = 0; i < n; ++i) {
-        if (i > 0) {
-            alive.insert(pos[i - 1]);
-        }
-        if (i < dict.size()) {
-            continue;
-        }
-
-        const unsigned pos_i = pos[i];
-        // to the left and to the right in suff arr
-        for (unsigned phase = 0; phase < 2; ++phase) {
-            auto it = alive.upper_bound(pos[i]);
-            for (unsigned iter = 0; iter < ITERS; ++iter) {
-                if (phase == 1) {
-                    if (it != alive.begin()) {
-                        --it;
-                    } else {
-                        break;
-                    }
-                }
-                if (it == alive.end()) {
-                    break;
-                }
-                const auto len = get_lcp_fast(*it, pos_i);
-                if (len >= MATCH_LENGHT_OFFSET) {
-                    const unsigned j = p[*it];
-                    CHECK(j < i);
-                    const unsigned offset = i - j;
-                    if (len > best_len[i] || (len == best_len[i] && offset < best_offset[i])) {
-                        best_offset[i] = offset;
-                        best_len[i] = len;
-                    }
-                }
-                if (phase == 0) {
-                    ++it;
-                }
+    // suff aut
+    {
+        Timer timer("End2end matches with suff automaton");
+        SuffAutBits<256> suff_aut_bits(data);
+        suff_aut_bits.build_matches(best_offset,best_len, MATCH_LENGHT_OFFSET);
+        for (unsigned i = 0; i < n; ++i) {
+            if (best_offset[i] != -1u) {
+                best_offset[i] = i - best_offset[i];
             }
         }
     }
@@ -200,10 +142,10 @@ std::basic_string<uint8_t> compress(
         i = j + best_len[j];
     }
 
-    std::cout << "serialize in bytes: " << " sum_match_len(bytes)=" << sum_matches_len
-            << ", bits_spent_on_tokens=" << bits_spent_on_tokens << ", cnt diff suff referenced: "
-            << suff_referenced.size() << ", cnt_references: " << cnt_references
-    << ", overall " << data.size() * 8 << " bits" << std::endl;
+    // std::cout << "serialize in bytes: " << " sum_match_len(bytes)=" << sum_matches_len
+    //         << ", bits_spent_on_tokens=" << bits_spent_on_tokens << ", cnt diff suff referenced: "
+    //         << suff_referenced.size() << ", cnt_references: " << cnt_references
+    // << ", overall " << data.size() * 8 << " bits" << std::endl;
 
     while (out.offs % 8 != 0) {
         store_uint(0, 1);
