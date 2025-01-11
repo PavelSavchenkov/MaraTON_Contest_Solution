@@ -3,7 +3,8 @@
 #include "suff_aut.hpp"
 
 namespace lz_compressor_bits {
-static const unsigned MIN_MATCH_LENGTH = 50; //32; 4 * 8;
+static constexpr unsigned MIN_MATCH_LENGTH = 50; //32; 4 * 8;
+static constexpr unsigned MAX_BITS_FOR_MATCH_OFFSET = 29;
 
 std::basic_string<uint8_t> compress(
     const std::basic_string<uint8_t>& input_bytes,
@@ -17,7 +18,12 @@ std::basic_string<uint8_t> compress(
     // suff aut
     {
         SuffAut<2> suff_aut_bits(input_bits);
-        suff_aut_bits.build_matches(best_match_suff, best_match_len, MIN_MATCH_LENGTH);
+        suff_aut_bits.build_matches(
+            best_match_suff,
+            best_match_len,
+            MIN_MATCH_LENGTH,
+            1u << MAX_BITS_FOR_MATCH_OFFSET
+        );
     }
 
     std::basic_string<uint8_t> output_bytes(n / 8 + 1, 0);
@@ -119,11 +125,14 @@ std::basic_string<uint8_t> compress(
                 output_bits.offs += 1;
             }
             bits_spent_on_match_len_tokens += push_number_as_blocks(match_len, best_match_len_bits);
-            const unsigned offset = i - best_match_suff[i];
+            unsigned offset = i - best_match_suff[i];
+            CHECK(offset > 0);
+            --offset;
             sum_offsets += offset;
             sum_offsets_sq += offset * 1ull * offset;
             match_lengths.push_back(match_len);
-            const unsigned bit_len = len_in_bits(i);
+            const unsigned bit_len = std::min(unsigned(len_in_bits(i - 1)), MAX_BITS_FOR_MATCH_OFFSET);
+            CHECK(offset < (1u << bit_len));
             bits_spent_on_match_offset_tokens += bit_len;
             bits_spent_on_match_offset_tokens_if_optimal += len_in_bits(offset);
             output_bits.store_uint(offset, bit_len);
@@ -231,8 +240,9 @@ std::basic_string<uint8_t> decompress(
 
         const auto match_len = get_number_as_blocks(best_match_len_bits);
         const unsigned i = output_bits.offs;
-        const auto bit_len = len_in_bits(i);
-        const auto offset = data_bits.get_uint(bit_len);
+        // const auto bit_len = len_in_bits(i);
+        const unsigned bit_len = std::min(unsigned(len_in_bits(i - 1)), MAX_BITS_FOR_MATCH_OFFSET);
+        const auto offset = data_bits.get_uint(bit_len) + 1;
         data_bits.offs += bit_len;
         const unsigned j = i - offset;
 

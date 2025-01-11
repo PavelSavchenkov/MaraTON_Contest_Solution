@@ -64,7 +64,7 @@ std::basic_string<uint8_t> compress(
     {
         Timer timer("End2end matches with suff automaton");
         SuffAut<256> suff_aut_bits(data);
-        suff_aut_bits.build_matches(best_offset,best_len, MATCH_LENGHT_OFFSET);
+        suff_aut_bits.build_matches(best_offset,best_len, MATCH_LENGHT_OFFSET, -1u);
         for (unsigned i = 0; i < n; ++i) {
             if (best_offset[i] != -1u) {
                 best_offset[i] = i - best_offset[i];

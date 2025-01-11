@@ -76,11 +76,12 @@ struct SuffAut : SuffAutBase<C> {
         }
     }
 
-    // "best_suff[i] = x" means [i ... n-1] and [x .. n-1] have a common prefix of length best_len[i]
+    // "best_suff[i] = x" means [i ... n-1] and [x .. n-1] have a common prefix of length best_len[i], x < i
     void build_matches(
         std::vector<unsigned> &best_suff,
         std::vector<unsigned> &best_len,
-        const unsigned min_match_len
+        const unsigned min_match_len,
+        const unsigned max_suff_offset // only (i - x) <= max_suff_offset
     ) {
         const unsigned n = s.size();
         CHECK(n <= best_suff.size());
@@ -104,15 +105,26 @@ struct SuffAut : SuffAutBase<C> {
         // from the longest orig suff to shortest
         for (unsigned i = 0; i < n; ++i) {
             best_suff[i] = -1u;
+            best_len[i] = 0;
             // suff [i .. n-1] in orig indexing
             unsigned u = vs[i];
             while (u && nodes[u].len >= min_match_len) {
-                if (last_suff[u] != -1u && best_suff[i] == -1u) {
-                    best_suff[i] = last_suff[u];
-                    best_len[i] = nodes[u].len;
+                if (last_suff[u] != -1u) {
+                    CHECK(i - last_suff[u] <= max_suff_offset);
+                    if (i - last_suff[u] <= max_suff_offset && nodes[u].len > best_len[i]) {
+                        CHECK(best_suff[i] == -1u);
+                        best_suff[i] = last_suff[u];
+                        best_len[i] = nodes[u].len;
+                    }
                 }
                 last_suff[u] = i;
                 u = nodes[u].link;
+            }
+        }
+        for (unsigned i = 0; i < n; ++i) {
+            if (best_len[i] >= min_match_len) {
+                CHECK(best_suff[i] != -1u);
+                CHECK(i - best_suff[i] <= max_suff_offset);
             }
         }
     }
