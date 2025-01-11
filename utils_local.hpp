@@ -174,3 +174,50 @@ inline void analyse_for_n(const unsigned n) {
                 best_sum_len * 1.0 / denom << std::endl;
     }
 }
+
+struct DSU {
+    std::vector<int> par{};
+
+    explicit DSU(unsigned n) {
+        par.assign(n, -1);
+    }
+
+    unsigned get_comp(const unsigned x) {
+        return (par[x] < 0) ? x : (par[x] = get_comp(par[x]));
+    }
+
+    bool unite(unsigned x, unsigned y) {
+        x = get_comp(x);
+        y = get_comp(y);
+        if (x == y) {
+            return false;
+        }
+        if (-par[x] < -par[y]) {
+            std::swap(x, y);
+        }
+
+        par[x] += par[y];
+        par[y] = x;
+        return true;
+    }
+
+    std::vector<unsigned> comp_sizes() {
+        std::set<unsigned> comps;
+        for (unsigned i = 0; i < par.size(); ++i) {
+            comps.insert(get_comp(i));
+        }
+        std::vector<unsigned> sizes;
+        for (auto c : comps) {
+            sizes.push_back(-par[c]);
+        }
+        return sizes;
+    }
+
+    unsigned cnt_comps() {
+        std::set<unsigned> comps;
+        for (unsigned i = 0; i < par.size(); ++i) {
+            comps.insert(get_comp(i));
+        }
+        return comps.size();
+    }
+};

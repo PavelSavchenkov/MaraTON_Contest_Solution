@@ -44,7 +44,7 @@ std::basic_string<uint8_t> compress(
         uint8_t best_block_size = -1;
         for (unsigned block_size = 2; block_size < (1u << 4); ++block_size) {
             unsigned overall_bits = 0;
-            for (const unsigned num : nums) {
+            for (const unsigned num: nums) {
                 overall_bits += (num / ((1u << block_size) - 1) + 1) * block_size;
             }
             if (overall_bits < best_overall_bits) {
@@ -91,6 +91,8 @@ std::basic_string<uint8_t> compress(
         std::set<unsigned> suff_referenced;
         unsigned sum_literal_lengths = 0;
         unsigned cnt_references = 0;
+        unsigned sum_offsets = 0;
+        unsigned sum_offsets_sq = 0;
         match_lengths.clear();
         for (unsigned i = start_index; i < n;) {
             auto match_len = best_match_len[i];
@@ -118,7 +120,8 @@ std::basic_string<uint8_t> compress(
                 }
                 bits_spent_on_match_len_tokens += push_number_as_blocks(match_len, best_match_len_bits);
                 const unsigned offset = i - best_match_suff[i];
-                // std::cout << "offset=" << offset << ", match_len=" << match_len << std::endl;
+                sum_offsets += offset;
+                sum_offsets_sq += offset * offset;
                 match_lengths.push_back(match_len);
                 const unsigned bit_len = len_in_bits(i);
                 bits_spent_on_match_offset_tokens += bit_len;
@@ -142,22 +145,25 @@ std::basic_string<uint8_t> compress(
         output_bits.store_uint(1, 1);
         output_bits.offs += 1;
 
-        // const unsigned bits_spent_on_tokens = bits_spent_on_literal_tokens + bits_spent_on_match_len_tokens +
-        //                                       bits_spent_on_match_offset_tokens;
-        // std::sort(match_lengths.begin(), match_lengths.end());
-        // const unsigned match_len_p90 = match_lengths[match_lengths.size() * 9 / 10];
-        // std::cout << "serialize: " << "bits_spent_on_tokens=" << bits_spent_on_tokens
-        //         << "\nsum_matches_len=" << sum_length_matches
-        //         << "\nsum_matches_len in bytes: " << sum_length_matches / 8
-        //         << "\ncnt diff suff referenced: " << suff_referenced.size()
-        //         << "\ncnt_references: " << cnt_references
-        //         << "\nbits_spent_on_literal_tokens: " << bits_spent_on_literal_tokens
-        //         << "\nbits_spent_on_match_len_tokens: " << bits_spent_on_match_len_tokens
-        //         << "\nbits_spent_on_match_offset_tokens: " << bits_spent_on_match_offset_tokens
-        //         << "\navg literal len: " << sum_literal_lengths * 1.0 / cnt_references
-        //         << "\nmatch_len_p90: " << match_len_p90
-        //         << "\navg bits per token: " << bits_spent_on_tokens * 1.0 / cnt_references
-        //         << "\noverall " << input_bits.size() << " bits" << std::endl;
+        const unsigned bits_spent_on_tokens = bits_spent_on_literal_tokens + bits_spent_on_match_len_tokens +
+                                              bits_spent_on_match_offset_tokens;
+        std::sort(match_lengths.begin(), match_lengths.end());
+        const unsigned match_len_p90 = match_lengths[match_lengths.size() * 9 / 10];
+        const double avg_offset = sum_offsets * 1.0 / cnt_references;
+        const double std_offset = std::sqrt(sum_offsets_sq * 1.0 / cnt_references - avg_offset);
+        std::cout << "SERIALIZE: " << "bits_spent_on_tokens=" << bits_spent_on_tokens
+                << "\nsum_matches_len=" << sum_length_matches
+                << "\nsum_matches_len in bytes: " << sum_length_matches / 8
+                << "\ncnt diff suff referenced: " << suff_referenced.size()
+                << "\ncnt_references: " << cnt_references
+                << "\nbits_spent_on_literal_tokens: " << bits_spent_on_literal_tokens
+                << "\nbits_spent_on_match_len_tokens: " << bits_spent_on_match_len_tokens
+                << "\nbits_spent_on_match_offset_tokens: " << bits_spent_on_match_offset_tokens
+                << "\navg literal len: " << sum_literal_lengths * 1.0 / cnt_references
+                << "\nmatch_len_p90: " << match_len_p90
+                << "\navg bits per token: " << bits_spent_on_tokens * 1.0 / cnt_references
+                << "\navg offset: " << avg_offset << " +- " << std_offset
+                << "\noverall " << input_bits.size() << " bits" << std::endl;
     }
 
     return {output_bits.ptr, static_cast<size_t>(output_bits.offs + 7) / 8};

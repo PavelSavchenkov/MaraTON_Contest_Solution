@@ -231,7 +231,7 @@ int main() {
 
     cnt_d1.assign(16, 0);
     cnt_data_size.assign(1024, 0);
-    cnt_d1_d2.assign(1024 * 16, 0);
+    cnt_d1_d2.assign(1u << (10 + 4), 0);
 
     std::ifstream files_names(files_names_file);
     std::string line;
