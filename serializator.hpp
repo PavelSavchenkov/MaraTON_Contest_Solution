@@ -514,7 +514,7 @@ std::string compress(
     if (return_before_huffman) {
         return to_string(S);
     }
-    // S = huffman::encode_8(S);
+    S = huffman::encode_8(S);
     auto base64 = td::base64_encode(td::Slice(S.data(), S.size()));
     return base64;
 }
@@ -523,7 +523,7 @@ std::string decompress(const std::string &base64_data) {
     CHECK(!base64_data.empty());
     std::string data = td::base64_decode(base64_data).move_as_ok();
     std::basic_string<uint8_t> S(data.begin(), data.end());
-    // S = huffman::decode_8(S);
+    S = huffman::decode_8(S);
 
     S = lz_compressor_bits::decompress(S, uncompressed_dict);
 

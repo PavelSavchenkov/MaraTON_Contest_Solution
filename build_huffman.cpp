@@ -5,6 +5,7 @@ int main() {
     const std::string pref = "/Users/pavel/Programming/MaraTON/ton-sample-tests/";
     const std::string files_names_file = pref + "file_list.txt";
 
+    std::array<unsigned, 256> freq{};
     std::ifstream files_names(files_names_file);
     std::string line;
     while (files_names >> line) {
@@ -24,8 +25,16 @@ int main() {
             cur_file >> base64_data;
             CHECK(!base64_data.empty());
 
-            const auto S_ = Serializator::compress(base64_data, true);
-            const std::basic_string<uint8_t> S(reinterpret_cast<const uint8_t*>(S_.data()), S_.size());
+            const auto S_bytes = Serializator::compress(base64_data, true, false);
+            for (const auto byte: S_bytes) {
+                ++freq[byte];
+            }
         }
     }
+
+    std::cout << "static const std::vector<unsigned> bytes_freq = {";
+    for (unsigned i = 0; i < 256; ++i) {
+        std::cout << freq[i] << ", ";
+    }
+    std::cout << "};" << std::endl;
 }

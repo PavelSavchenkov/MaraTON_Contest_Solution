@@ -21,22 +21,11 @@ td::Ref<vm::Cell> read_from_filepath_to_root_cell(const std::string& block_path)
     std::string tmp;
     in >> tmp;
 
-    // base64 data
     std::string base64_data;
     in >> base64_data;
     CHECK(!base64_data.empty());
-
     td::BufferSlice binary_data(td::base64_decode(base64_data).move_as_ok());
-
-    // uint32_t first_32bits = 0;
-    // for (int i = 0; i < 4; ++i) {
-    //     first_32bits = (first_32bits << 8) ^ uint8_t(binary_data[i]);
-    // }
-    // std::cout << "first 32 bits in hex: 0x" << std::hex << first_32bits << std::dec << std::endl;
-    // exit(0);
-
     td::Ref<vm::Cell> root = vm::std_boc_deserialize(binary_data).move_as_ok();
-
     return root;
 }
 

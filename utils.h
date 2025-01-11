@@ -113,9 +113,11 @@ struct Timer {
 };
 
 std::string to_string(const std::basic_string<uint8_t>& bytes) {
+    return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+
     std::stringstream res;
     for (const auto byte : bytes) {
-        res << std::bitset<1>(byte);
+        res << std::bitset<8>(byte);
     }
     return res.str();
 }
