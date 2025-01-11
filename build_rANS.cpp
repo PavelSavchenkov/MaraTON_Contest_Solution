@@ -28,16 +28,16 @@ int main() {
         cur_file >> base64_data;
         CHECK(!base64_data.empty());
 
-        const auto S_ = Serializator::compress(base64_data, true, false);
-        std::basic_string<uint8_t> S(reinterpret_cast<const uint8_t *>(S_.data()), S_.size());
-        data += S;
+        const auto S_ = Serializator::compress(base64_data, false, false);
+        // std::basic_string<uint8_t> S(reinterpret_cast<const uint8_t *>(S_.data()), S_.size());
+        // data += S;
     }
-    auto probs = rANS::get_probs(data);
-
-    std::cout << "Probabilities:" << std::endl;
-    std::cout << "{";
-    for (unsigned c = 0; c < rANS::context_vals; ++c) {
-        std::cout << probs[c] * 1.0 / rANS::probs_interval << ",";
-    }
-    std::cout << "}" << std::endl;
+    // auto probs = rANS::get_probs(data);
+    //
+    // std::cout << "Probabilities:" << std::endl;
+    // std::cout << "{";
+    // for (unsigned c = 0; c < rANS::context_vals; ++c) {
+    //     std::cout << probs[c] * 1.0 / rANS::probs_interval << ",";
+    // }
+    // std::cout << "}" << std::endl;
 }

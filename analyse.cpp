@@ -55,7 +55,7 @@ void dfs(const td::Ref<vm::Cell> &cell, bool is_root = false) {
     const uint8_t d1 = cnt_refs + 8 * (cell_loaded.data_cell->is_special());
     ++cnt_d1[d1];
 
-    const unsigned data_size = cell_loaded.data_cell->get_bits();
+    const unsigned data_size = cell_loaded.data_cell->size();
     ++cnt_data_size[data_size];
 
     ++cnt_d1_d2[(data_size << 4u) ^ d1];

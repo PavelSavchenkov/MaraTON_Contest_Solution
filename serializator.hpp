@@ -214,6 +214,14 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
             }
         }
 
+        // SHUFFLE
+        // std::random_device rd;
+        // std::mt19937 g(rd());
+        // std::shuffle(order.begin(), order.end(), g);
+        // std::sort(order.begin(), order.end(), [&](unsigned i, unsigned j) {
+        //     return my_cells[i]->cnt_bits < my_cells[j]->cnt_bits;
+        // });
+
         // update ref indexes
         std::vector<unsigned> pos(n);
         for (unsigned i = 0; i < n; i++) {
@@ -236,35 +244,47 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
         }
     }
 
-    std::random_device rd;
-    std::mt19937 g(rd());
-    // std::shuffle(my_cells.begin(), my_cells.end(), g);
-
     std::basic_string<uint8_t> bytes(50 + n + n * 4 * 3 + n * 256, 0);
     td::BitPtr bits_ptr(bytes.data(), 0);
     huffman::HuffmanEncoderDecoder d1_encoder(huffman::d1_freq);
-    // huffman::HuffmanEncoderDecoder data_size_encoder(huffman::d1_freq);
+    huffman::HuffmanEncoderDecoder data_size_encoder(huffman::data_size_freq);
     std::basic_string<unsigned> cell_id;
+
+    // store n
+    bits_ptr.store_uint(n, 20);
+    bits_ptr.offs += 20;
+
+    // compress refs
+    const bool compress_refs = false;
+    bits_ptr.store_uint(compress_refs, 1);
+    bits_ptr.offs += 1;
 
     // d1
     for (unsigned i = 0; i < n; ++i) {
         const auto d1 = my_cells[i]->d1();
-        const auto spent_bits = d1_encoder.encode_symbol(bits_ptr, d1);
+        auto spent_bits = d1_encoder.encode_symbol(bits_ptr, d1);
+        cell_id += std::basic_string<unsigned>(spent_bits, i);
+    }
+
+    // data sizes
+    for (unsigned i = 0; i < n; ++i) {
+        const auto data_size = my_cells[i]->cnt_bits;
+        auto spent_bits = data_size_encoder.encode_symbol(bits_ptr, data_size);
         cell_id += std::basic_string<unsigned>(spent_bits, i);
     }
 
     // refs
     for (unsigned i = 0; i < n; ++i) {
-        const auto cnt_bits_i = len_in_bits(i);
+        const auto bit_len = compress_refs ? len_in_bits(i) : len_in_bits(n - 1);
         for (unsigned j = 0; j < my_cells[i]->cnt_refs; ++j) {
             const unsigned ref = my_cells[i]->refs[j];
             // CHECK(ref < i);
 
-            const auto rnd = i - ref; //rd();
-            bits_ptr.store_uint(rnd, cnt_bits_i);
-            bits_ptr.offs += cnt_bits_i;
+            const auto ref_store = (n + i - ref) % n; //rd();
+            bits_ptr.store_uint(ref_store, bit_len);
+            bits_ptr.offs += bit_len;
 
-            cell_id += std::basic_string<unsigned>(cnt_bits_i, i);
+            cell_id += std::basic_string<unsigned>(bit_len, i);
         }
     }
 
@@ -282,20 +302,6 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
         cell_id += std::basic_string<unsigned>(my_cell->cnt_bits, i);
     }
     const unsigned data_end = bits_ptr.offs;
-
-    // data sizes in reverse
-    const unsigned cnt_all_bits = bits_ptr.offs + BITS_DATA_SIZE * n;
-    for (unsigned i = 0; i < n; ++i) {
-        bits_ptr.offs = cnt_all_bits - BITS_DATA_SIZE * (i + 1);
-        const unsigned cnt_bits = my_cells[i]->cnt_bits;
-        CHECK(len_in_bits(cnt_bits) <= BITS_DATA_SIZE);
-        bits_ptr.store_uint(my_cells[i]->cnt_bits, BITS_DATA_SIZE);
-        cell_id += std::basic_string<unsigned>(BITS_DATA_SIZE, n - i - 1);
-    }
-    bits_ptr.offs = cnt_all_bits;
-    bits_ptr.store_uint(1, 1);
-    bits_ptr.offs += 1;
-    cell_id += -1u;
 
     const auto output = std::basic_string<uint8_t>(bits_ptr.ptr, (bits_ptr.offs + 7) / 8);
 
@@ -446,6 +452,11 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
             //     std::cout << std::hex << "0x" << ptr.get_uint(4 * 8) << std::dec << std::endl;
             // }
         }
+        // std::cout << "static const std::vector<unsigned> data_size_freq = {";
+        // for (const auto &it: cnt_with_data_sz) {
+        //     std::cout << it << ",";
+        // }
+        // std::cout << "};" << std::endl;
         // exit(0);
         // for (const auto& it: cnt_with_data_sz) {
         //     std::cout << it.second << " cells with data sz=" << it.first << std::endl;
@@ -462,88 +473,91 @@ td::BufferSlice serialize_slice(td::Ref<vm::Cell> root) {
 }
 
 td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
-    unsigned cnt_all_bits = buffer.size() * 8;
-    CHECK(buffer.back() != 0);
-    for (unsigned i = 0; i < 8; ++i) {
-        if (buffer.back() & (1u << i)) {
-            cnt_all_bits -= (i + 1);
-            break;
-        }
-    }
-
     td::BitPtr buffer_bit(buffer.data(), 0);
     huffman::HuffmanEncoderDecoder d1_decoder(huffman::d1_freq);
+    huffman::HuffmanEncoderDecoder data_size_decoder(huffman::data_size_freq);
+
+    const unsigned n = buffer_bit.get_uint(20);
+    buffer_bit.offs += 20;
+
+    const bool compress_refs = buffer_bit.get_uint(1);
+    buffer_bit.offs += 1;
+
     std::vector<Ptr<MyCell> > my_cells;
+    my_cells.reserve(n);
 
     // build my_cells
-    unsigned sum_bits_refs = 0;
-    unsigned sum_bits_data = 0;
-    for (unsigned i = 0; ; ++i) {
+    for (unsigned i = 0; i < n; ++i) {
         Ptr<MyCell> my_cell = std::make_shared<MyCell>();
 
         const auto d1 = d1_decoder.decode_symbol(buffer_bit);
         my_cell->cnt_refs = d1 & 7;
         CHECK(my_cell->cnt_refs <= 4);
         my_cell->is_special = d1 & 8;
-        sum_bits_refs += my_cell->cnt_refs * len_in_bits(i);
-
-        // read data size stored in reverse
-        {
-            const auto old_offs = buffer_bit.offs;
-            buffer_bit.offs = cnt_all_bits - BITS_DATA_SIZE * (i + 1);
-            const auto data_size = buffer_bit.get_uint(BITS_DATA_SIZE);
-            buffer_bit.offs = old_offs;
-            my_cell->cnt_bits = data_size;
-            sum_bits_data += data_size;
-        }
 
         my_cells.push_back(my_cell);
-
-        const unsigned cnt_bits_pref = buffer_bit.offs + sum_bits_refs;
-        const unsigned cnt_bits_suff = (i + 1) * BITS_DATA_SIZE;
-        const unsigned sum_bits = cnt_bits_pref + sum_bits_data + cnt_bits_suff;
-        if (sum_bits >= cnt_all_bits) {
-            CHECK(sum_bits == cnt_all_bits);
-            break;
-        }
     }
-    const auto n = my_cells.size();
-    CHECK(!my_cells.empty());
 
-    const auto bits_for_ref = len_in_bits(n - 1);
-    // read refs and data
-    unsigned offset_data = buffer_bit.offs + sum_bits_refs;
+    // data sizes
+    for (auto& my_cell: my_cells) {
+        const auto data_size = data_size_decoder.decode_symbol(buffer_bit);
+        my_cell->cnt_bits = data_size;
+    }
+
+    // read refs
     for (unsigned i = 0; i < n; ++i) {
         auto& my_cell = my_cells[i];
 
-        // read up to 4 refs
-        const auto cnt_bits_i = len_in_bits(i);
+        const auto bit_len = compress_refs ? len_in_bits(i) : len_in_bits(n - 1);
         for (unsigned j = 0; j < my_cell->cnt_refs; j++) {
-            unsigned ref_id = i - buffer_bit.get_uint(cnt_bits_i);
-            buffer_bit.offs += cnt_bits_i;
+            unsigned ref_id = (n + i - buffer_bit.get_uint(bit_len)) % n;
+            buffer_bit.offs += bit_len;
             my_cell->refs[j] = ref_id;
-            CHECK(ref_id < i);
-        }
-
-        // read data
-        {
-            const auto old_offs = buffer_bit.offs;
-            buffer_bit.offs = offset_data;
-            my_cell->data.resize((my_cell->cnt_bits + 7) / 8, 0);
-            td::BitPtr my_cell_bit_ptr(my_cell->data.data(), 0);
-            for (unsigned j = 0; j < my_cell->cnt_bits; ++j) {
-                my_cell_bit_ptr.store_uint(buffer_bit.get_uint(1), 1);
-                buffer_bit.offs += 1;
-                my_cell_bit_ptr.offs += 1;
+            if (compress_refs) {
+                CHECK(ref_id < i);
             }
-            offset_data = buffer_bit.offs;
-            buffer_bit.offs = old_offs;
         }
     }
 
+    for (unsigned i = 0; i < n; ++i) {
+        auto& my_cell = my_cells[i];
+        my_cell->data.resize((my_cell->cnt_bits + 7) / 8, 0);
+        td::BitPtr my_cell_bit_ptr(my_cell->data.data(), 0);
+        for (unsigned j = 0; j < my_cell->cnt_bits; ++j) {
+            my_cell_bit_ptr.store_uint(buffer_bit.get_uint(1), 1);
+            buffer_bit.offs += 1;
+            my_cell_bit_ptr.offs += 1;
+        }
+    }
+
+    // top sort, just in case
+    std::vector<unsigned> order;
+    {
+        std::vector<char> was(n, 0);
+        const auto dfs = [&](auto&& self, unsigned v) -> void {
+            CHECK(v < n);
+            CHECK(!was[v]);
+            was[v] = true;
+            for (unsigned i = 0; i < my_cells[v]->cnt_refs; ++i) {
+                const auto to = my_cells[v]->refs[i];
+                if (!was[to]) {
+                    self(self, to);
+                }
+            }
+            order.push_back(v);
+        };
+        for (unsigned v = 0; v < n; ++v) {
+            if (!was[v]) {
+                dfs(dfs, v);
+            }
+        }
+    }
+    CHECK(order.size() == n);
+
     // build DAG of td::Ref<vm::Cell>
     std::vector<td::Ref<vm::Cell> > cells(n);
-    for (unsigned i = 0; i < n; ++i) {
+    std::vector<char> ready(n, 0);
+    for (const auto i : order) {
         const auto& my_cell = my_cells.at(i);
 
         vm::CellBuilder cell_builder;
@@ -552,8 +566,9 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
         std::vector<td::Ref<vm::Cell> > refs;
         for (unsigned j = 0; j < my_cell->cnt_refs; ++j) {
             unsigned ref_id = my_cell->refs[j];
-            CHECK(len_in_bits(ref_id) <= len_in_bits(i));
+            // CHECK(len_in_bits(ref_id) <= len_in_bits(i));
             CHECK(cells[ref_id].get());
+            CHECK(ready[ref_id]);
             cell_builder.store_ref(cells[ref_id]);
             refs.push_back(cells[ref_id]);
         }
@@ -618,9 +633,10 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
         CHECK(cell->get_bits() == cnt_bits);
 
         cells[i] = cell;
+        ready[i] = true;
     }
 
-    return cells.back();
+    return cells[order.back()];
 }
 
 td::Ref<vm::Cell> deserialise_slice(td::Slice buffer_slice) {
