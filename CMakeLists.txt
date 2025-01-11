@@ -23,6 +23,7 @@ endfunction()
 
 setup_target(main main.cpp)
 setup_target(analyse analyse.cpp)
+setup_target(analyse2 analyse2.cpp)
 setup_target(Cells "code-examples/01 - Cells.cpp")
 setup_target(TLB "code-examples/03 - TLB.cpp")
 setup_target(TLB2 "code-examples/04 - TLB 2.cpp")

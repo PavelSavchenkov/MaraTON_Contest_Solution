@@ -34,17 +34,12 @@ struct HuffmanEncoderDecoder {
     std::vector<std::pair<uint64_t, uint8_t> > codes{};
     Ptr<Node> root{};
 
-    void encode_symbol(td::BitPtr &bit_ptr, const unsigned s) const {
-        // {
-        //     bit_ptr.store_uint(s, 4);
-        //     bit_ptr.offs += 4;
-        //     return;
-        // }
-
+    unsigned encode_symbol(td::BitPtr &bit_ptr, const unsigned s) const {
         const auto &code = codes[s];
         CHECK(code.second > 0);
         bit_ptr.store_uint(code.first, code.second);
         bit_ptr.offs += code.second;
+        return code.second;
     }
 
     unsigned decode_symbol(td::BitPtr &bit_ptr) const {

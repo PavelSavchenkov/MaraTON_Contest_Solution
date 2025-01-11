@@ -234,11 +234,13 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
     std::basic_string<uint8_t> bytes(50 + n + n * 4 * 3 + n * 256, 0);
     td::BitPtr bits_ptr(bytes.data(), 0);
     huffman::HuffmanEncoderDecoder d1_encoder(huffman::d1_freq);
+    // std::basic_string<unsigned> cell_id;
 
     // d1
     for (unsigned i = 0; i < n; ++i) {
         const auto d1 = my_cells[i]->d1();
-        d1_encoder.encode_symbol(bits_ptr, d1);
+        const auto spent_bits = d1_encoder.encode_symbol(bits_ptr, d1);
+        // cell_id += std::basic_string<unsigned>(spent_bits, i);
     }
 
     // refs
@@ -249,22 +251,21 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
             CHECK(ref < i);
             bits_ptr.store_uint(i - ref, cnt_bits_i);
             bits_ptr.offs += cnt_bits_i;
+            // cell_id += std::basic_string<unsigned>(cnt_bits_i, i);
         }
     }
 
     // data
     for (unsigned i = 0; i < n; ++i) {
         const auto my_cell = my_cells[i];
-        const unsigned len = my_cell->cnt_bits;
-        for (unsigned j = 0; j < len / 8; ++j) {
-            bits_ptr.store_uint(my_cell->data[j], 8);
-            bits_ptr.offs += 8;
+        td::ConstBitPtr data_ptr(my_cell->data.data(), 0);
+        for (unsigned j = 0; j < my_cell->cnt_bits; ++j) {
+            bool bit = data_ptr.get_uint(1);
+            data_ptr.offs += 1;
+            bits_ptr.store_uint(bit, 1);
+            bits_ptr.offs += 1;
         }
-        if (len % 8 != 0) {
-            const uint8_t byte = my_cell->data[len / 8] >> (8 - len % 8);
-            bits_ptr.store_uint(byte, len % 8);
-            bits_ptr.offs += len % 8;
-        }
+        // cell_id += std::basic_string<unsigned>(my_cell->cnt_bits, i);
     }
 
     // data sizes in reverse
@@ -274,12 +275,53 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
         const unsigned cnt_bits = my_cells[i]->cnt_bits;
         CHECK(len_in_bits(cnt_bits) <= BITS_DATA_SIZE);
         bits_ptr.store_uint(my_cells[i]->cnt_bits, BITS_DATA_SIZE);
+        // cell_id += std::basic_string<unsigned>(BITS_DATA_SIZE, n - i - 1);
     }
     bits_ptr.offs = cnt_all_bits;
     bits_ptr.store_uint(1, 1);
     bits_ptr.offs += 1;
+    // cell_id += -1u;
 
-    return std::basic_string<uint8_t>(bits_ptr.ptr, (bits_ptr.offs + 7) / 8);
+    const auto output = std::basic_string<uint8_t>(bits_ptr.ptr, (bits_ptr.offs + 7) / 8);
+
+    // check lz references
+    // {
+    //     const auto bits = bytes_str_to_bit_str(output);
+    //     const unsigned n = bits.size();
+    //     std::vector<unsigned> best_match_suff(n, -1);
+    //     std::vector<unsigned> best_match_len(n, 0);
+    //     // suff aut
+    //     {
+    //         SuffAut<2> suff_aut_bits(bits);
+    //         suff_aut_bits.build_matches(best_match_suff, best_match_len, lz_compressor_bits::MIN_MATCH_LENGTH);
+    //     }
+    //
+    //     std::map<unsigned, unsigned> cnt_with_matches_x_cells;
+    //     std::map<unsigned, unsigned> sum_len_matches;
+    //     for (unsigned i = 0; i < n;) {
+    //         const auto match_len = best_match_len[i];
+    //         if (match_len >= lz_compressor_bits::MIN_MATCH_LENGTH) {
+    //             const auto start = best_match_suff[i];
+    //             std::set<unsigned> diff_ids;
+    //             for (unsigned j = 0; j < match_len; ++j) {
+    //                 diff_ids.insert(cell_id[start + j]);
+    //                 CHECK(bits[start + j] == bits[i + j]);
+    //             }
+    //             cnt_with_matches_x_cells[diff_ids.size()] += 1;
+    //             sum_len_matches[diff_ids.size()] += match_len;
+    //             i += match_len;
+    //         } else {
+    //             ++i;
+    //         }
+    //     }
+    //     std::cout << "stats for matching other cells: " << std::endl;
+    //     for (const auto& it : cnt_with_matches_x_cells) {
+    //         std::cout << it.second << " matches referenced " << it.first << " different other cells, "
+    //         << "avg len is " << sum_len_matches[it.first] * 1.0 / it.second << std::endl;
+    //     }
+    // }
+
+    return output;
 }
 
 td::BufferSlice serialize_slice(td::Ref<vm::Cell> root) {

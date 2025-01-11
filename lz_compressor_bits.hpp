@@ -4,8 +4,6 @@
 
 namespace lz_compressor_bits {
 static const unsigned MIN_MATCH_LENGTH = 42; //32; 4 * 8;
-static const unsigned LITERAL_LENGTH_BITS_BLOCK = 9;
-static const unsigned MATCH_LENGTH_BITS_BLOCK = 8;
 
 std::basic_string<uint8_t> compress(
     const std::basic_string<uint8_t>& input_bytes,
@@ -41,18 +39,59 @@ std::basic_string<uint8_t> compress(
         return bits_spent;
     };
 
+    const auto find_best_block_size = [&](const std::vector<unsigned>& nums) -> uint8_t {
+        unsigned best_overall_bits = -1u;
+        uint8_t best_block_size = -1;
+        for (unsigned block_size = 2; block_size < (1u << 4); ++block_size) {
+            unsigned overall_bits = 0;
+            for (const unsigned num : nums) {
+                overall_bits += (num / ((1u << block_size) - 1) + 1) * block_size;
+            }
+            if (overall_bits < best_overall_bits) {
+                best_overall_bits = overall_bits;
+                best_block_size = block_size;
+            }
+        }
+        return best_block_size;
+    };
+
+    const unsigned start_index = dict.size() * 8;
+    unsigned last_literal_start = start_index;
+    std::vector<unsigned> match_lengths;
+    std::vector<unsigned> literal_lengths;
+    for (unsigned i = start_index; i < n;) {
+        auto match_len = best_match_len[i];
+        if (match_len >= MIN_MATCH_LENGTH) {
+            match_lengths.push_back(match_len);
+            literal_lengths.push_back(i - last_literal_start);
+            last_literal_start = i;
+            i += match_len;
+        } else {
+            ++i;
+        }
+    }
+    if (last_literal_start < n) {
+        literal_lengths.push_back(n - last_literal_start);
+    }
+
+    const uint8_t best_match_len_bits = find_best_block_size(match_lengths);
+    const uint8_t best_literal_len_bits = find_best_block_size(literal_lengths);
+    output_bits.store_uint(best_match_len_bits, 4);
+    output_bits.offs += 4;
+    output_bits.store_uint(best_literal_len_bits, 4);
+    output_bits.offs += 4;
+
     // Push serialization bits
     {
-        const unsigned start_index = dict.size() * 8;
+        last_literal_start = start_index;
         unsigned sum_length_matches = 0;
         unsigned bits_spent_on_literal_tokens = 0;
         unsigned bits_spent_on_match_len_tokens = 0;
         unsigned bits_spent_on_match_offset_tokens = 0;
-        unsigned last_literal_start = start_index;
         std::set<unsigned> suff_referenced;
         unsigned sum_literal_lengths = 0;
         unsigned cnt_references = 0;
-        std::vector<unsigned> match_lengths{};
+        match_lengths.clear();
         for (unsigned i = start_index; i < n;) {
             auto match_len = best_match_len[i];
             if (match_len >= MIN_MATCH_LENGTH) {
@@ -72,12 +111,12 @@ std::basic_string<uint8_t> compress(
                 CHECK(last_literal_start <= i);
                 const auto literal_len = i - last_literal_start;
                 sum_literal_lengths += literal_len;
-                bits_spent_on_literal_tokens += push_number_as_blocks(literal_len, LITERAL_LENGTH_BITS_BLOCK);
+                bits_spent_on_literal_tokens += push_number_as_blocks(literal_len, best_literal_len_bits);
                 for (unsigned it = 0; it < literal_len; ++it) {
                     output_bits.store_uint(input_bits[last_literal_start + it], 1);
                     output_bits.offs += 1;
                 }
-                bits_spent_on_match_len_tokens += push_number_as_blocks(match_len, MATCH_LENGTH_BITS_BLOCK);
+                bits_spent_on_match_len_tokens += push_number_as_blocks(match_len, best_match_len_bits);
                 const unsigned offset = i - best_match_suff[i];
                 // std::cout << "offset=" << offset << ", match_len=" << match_len << std::endl;
                 match_lengths.push_back(match_len);
@@ -94,7 +133,7 @@ std::basic_string<uint8_t> compress(
         }
         if (last_literal_start < n) {
             const auto literal_len = n - last_literal_start;
-            bits_spent_on_literal_tokens += push_number_as_blocks(literal_len, LITERAL_LENGTH_BITS_BLOCK);
+            bits_spent_on_literal_tokens += push_number_as_blocks(literal_len, best_literal_len_bits);
             for (unsigned it = 0; it < literal_len; ++it) {
                 output_bits.store_uint(input_bits[last_literal_start + it], 1);
                 output_bits.offs += 1;
@@ -103,10 +142,10 @@ std::basic_string<uint8_t> compress(
         output_bits.store_uint(1, 1);
         output_bits.offs += 1;
 
-        const unsigned bits_spent_on_tokens = bits_spent_on_literal_tokens + bits_spent_on_match_len_tokens +
-                                              bits_spent_on_match_offset_tokens;
-        std::sort(match_lengths.begin(), match_lengths.end());
-        const unsigned match_len_p90 = match_lengths[match_lengths.size() * 9 / 10];
+        // const unsigned bits_spent_on_tokens = bits_spent_on_literal_tokens + bits_spent_on_match_len_tokens +
+        //                                       bits_spent_on_match_offset_tokens;
+        // std::sort(match_lengths.begin(), match_lengths.end());
+        // const unsigned match_len_p90 = match_lengths[match_lengths.size() * 9 / 10];
         // std::cout << "serialize: " << "bits_spent_on_tokens=" << bits_spent_on_tokens
         //         << "\nsum_matches_len=" << sum_length_matches
         //         << "\nsum_matches_len in bytes: " << sum_length_matches / 8
@@ -117,6 +156,7 @@ std::basic_string<uint8_t> compress(
         //         << "\nbits_spent_on_match_offset_tokens: " << bits_spent_on_match_offset_tokens
         //         << "\navg literal len: " << sum_literal_lengths * 1.0 / cnt_references
         //         << "\nmatch_len_p90: " << match_len_p90
+        //         << "\navg bits per token: " << bits_spent_on_tokens * 1.0 / cnt_references
         //         << "\noverall " << input_bits.size() << " bits" << std::endl;
     }
 
@@ -152,11 +192,16 @@ std::basic_string<uint8_t> decompress(
         return num;
     };
 
+    const uint8_t best_match_len_bits = data_bits.get_uint(4);
+    data_bits.offs += 4;
+    const uint8_t best_literal_len_bits = data_bits.get_uint(4);
+    data_bits.offs += 4;
+
     std::basic_string<uint8_t> output_bytes(2 << 20, 0);
     output_bytes = dict + output_bytes;
     td::BitPtr output_bits(output_bytes.data(), dict.size() * 8);
     while (data_bits.offs < n_bits) {
-        const auto literal_len = get_number_as_blocks(LITERAL_LENGTH_BITS_BLOCK);
+        const auto literal_len = get_number_as_blocks(best_literal_len_bits);
 
         // TODO: iterate x64
         // read literal
@@ -172,7 +217,7 @@ std::basic_string<uint8_t> decompress(
             break;
         }
 
-        const auto match_len = get_number_as_blocks(MATCH_LENGTH_BITS_BLOCK);
+        const auto match_len = get_number_as_blocks(best_match_len_bits);
         const unsigned i = output_bits.offs;
         const auto bit_len = len_in_bits(i);
         const auto offset = data_bits.get_uint(bit_len);
