@@ -28,9 +28,11 @@ int main() {
         cur_file >> base64_data;
         CHECK(!base64_data.empty());
 
-        const auto S_ = Serializator::compress(base64_data, false, false);
+        const auto S_ = Serializator::compress(base64_data, false, true);
         // std::basic_string<uint8_t> S(reinterpret_cast<const uint8_t *>(S_.data()), S_.size());
         // data += S;
+
+        // break;
     }
     // auto probs = rANS::get_probs(data);
     //

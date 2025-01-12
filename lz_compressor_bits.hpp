@@ -18,12 +18,17 @@ std::basic_string<uint8_t> compress(
     // suff aut
     {
         SuffAut<2> suff_aut_bits(input_bits);
-        suff_aut_bits.build_matches(
-            best_match_suff,
-            best_match_len,
-            MIN_MATCH_LENGTH,
-            1u << MAX_BITS_FOR_MATCH_OFFSET
+        const auto matches = suff_aut_bits.build_matches(
+            MIN_MATCH_LENGTH
         );
+        for (unsigned i = 0; i < n; ++i) {
+            for (const auto& match : matches[i]) {
+                if (match.len > best_match_len[i]) {
+                    best_match_len[i] = match.len;
+                    best_match_suff[i] = match.start;
+                }
+            }
+        }
     }
 
     std::basic_string<uint8_t> output_bytes(n / 8 + 1, 0);
@@ -70,8 +75,8 @@ std::basic_string<uint8_t> compress(
         if (match_len >= MIN_MATCH_LENGTH) {
             match_lengths.push_back(match_len);
             literal_lengths.push_back(i - last_literal_start);
-            last_literal_start = i;
             i += match_len;
+            last_literal_start = i;
         } else {
             ++i;
         }

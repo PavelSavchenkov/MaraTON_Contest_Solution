@@ -90,8 +90,19 @@ inline void push_bit_range(
 }
 
 template<typename T>
-std::basic_string<uint8_t> bytes_str_to_bit_str(const T& bytes) {
-    std::basic_string<uint8_t> bits(bytes.size() * 8, 0);
+std::basic_string<uint8_t> bytes_str_to_bit_str(
+    const T& bytes,
+    const bool marked_end = false
+) {
+    unsigned cnt_bits = bytes.size() * 8;
+    if (marked_end) {
+        const auto byte = bytes.back();
+        CHECK(byte != 0);
+        const auto trailing = td::count_trailing_zeroes64(byte);
+        CHECK(trailing <= 7);
+        cnt_bits -= trailing + 1;
+    }
+    std::basic_string<uint8_t> bits(cnt_bits, 0);
     for (unsigned i = 0; i < bits.size(); ++i) {
         const auto byte = static_cast<uint8_t>(bytes[i / 8]);
         bits[i] = ((byte >> (7 - i % 8)) & 1);
@@ -113,10 +124,10 @@ struct Timer {
 };
 
 std::string to_string(const std::basic_string<uint8_t>& bytes) {
-    return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    return std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size());
 
     std::stringstream res;
-    for (const auto byte : bytes) {
+    for (const auto byte: bytes) {
         res << std::bitset<8>(byte);
     }
     return res.str();

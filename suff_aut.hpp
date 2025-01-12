@@ -62,13 +62,18 @@ protected:
     }
 };
 
+struct Match {
+    unsigned start{-1u};
+    unsigned len{-1u};
+};
+
 template<unsigned C>
 struct SuffAut : SuffAutBase<C> {
     using SuffAutBase<C>::add_c;
     using SuffAutBase<C>::nodes;
     using SuffAutBase<C>::root;
 
-    explicit SuffAut(const std::basic_string<uint8_t> &s) : SuffAutBase<C>(), s(s) {
+    explicit SuffAut(const std::basic_string<uint8_t>& s) : SuffAutBase<C>(), s(s) {
         nodes.reserve(s.size() * 2);
 
         for (unsigned it = 0; it < s.size(); ++it) {
@@ -77,15 +82,12 @@ struct SuffAut : SuffAutBase<C> {
     }
 
     // "best_suff[i] = x" means [i ... n-1] and [x .. n-1] have a common prefix of length best_len[i], x < i
-    void build_matches(
-        std::vector<unsigned> &best_suff,
-        std::vector<unsigned> &best_len,
-        const unsigned min_match_len,
-        const unsigned max_suff_offset // only (i - x) <= max_suff_offset
+    std::vector<std::vector<Match>>
+    build_matches(
+        const unsigned min_match_len
     ) {
         const unsigned n = s.size();
-        CHECK(n <= best_suff.size());
-        CHECK(n <= best_len.size());
+        std::vector<std::vector<Match>> matches(n);
 
         std::vector<unsigned> vs;
         vs.reserve(n);
@@ -104,31 +106,22 @@ struct SuffAut : SuffAutBase<C> {
         std::vector<unsigned> last_suff(nodes.size(), -1); // in orig indexing, before string reversal
         // from the longest orig suff to shortest
         for (unsigned i = 0; i < n; ++i) {
-            best_suff[i] = -1u;
-            best_len[i] = 0;
             // suff [i .. n-1] in orig indexing
             unsigned u = vs[i];
             while (u && nodes[u].len >= min_match_len) {
                 if (last_suff[u] != -1u) {
-                    CHECK(i - last_suff[u] <= max_suff_offset);
-                    if (i - last_suff[u] <= max_suff_offset && nodes[u].len > best_len[i]) {
-                        CHECK(best_suff[i] == -1u);
-                        best_suff[i] = last_suff[u];
-                        best_len[i] = nodes[u].len;
-                    }
+                    Match match{};
+                    match.start = last_suff[u];
+                    match.len = nodes[u].len;
+                    matches[i].push_back(match);
                 }
                 last_suff[u] = i;
                 u = nodes[u].link;
             }
         }
-        for (unsigned i = 0; i < n; ++i) {
-            if (best_len[i] >= min_match_len) {
-                CHECK(best_suff[i] != -1u);
-                CHECK(i - best_suff[i] <= max_suff_offset);
-            }
-        }
+        return matches;
     }
 
 private:
-    const std::basic_string<uint8_t> &s;
+    const std::basic_string<uint8_t>& s;
 };
