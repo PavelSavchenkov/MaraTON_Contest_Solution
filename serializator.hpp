@@ -258,31 +258,22 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
     bits_ptr.store_uint(compress_refs, 1);
     bits_ptr.offs += 1;
 
-    // d1
-    // auto old = bits_ptr.offs;
-    for (unsigned i = 0; i < n; ++i) {
+    const auto push_d1 = [&](const unsigned i) {
         const auto d1 = my_cells[i]->d1();
         auto spent_bits = d1_encoder.encode_symbol(bits_ptr, d1);
         cell_id += std::basic_string<unsigned>(spent_bits, i);
-    }
-    // std::cout << "d1 len = " << bits_ptr.offs - old << std::endl;
+    };
 
-    // data sizes
-    // old = bits_ptr.offs;
-    for (unsigned i = 0; i < n; ++i) {
+    const auto push_data_size = [&](const unsigned i) {
         const auto data_size = my_cells[i]->cnt_bits;
         auto spent_bits = data_size_encoder.encode_symbol(bits_ptr, data_size);
         cell_id += std::basic_string<unsigned>(spent_bits, i);
-    }
-    // std::cout << "data sizes len = " << bits_ptr.offs - old << std::endl;
+    };
 
-    // refs
-    // old = bits_ptr.offs;
-    for (unsigned i = 0; i < n; ++i) {
+    const auto push_refs = [&](const unsigned i) {
         const auto bit_len = compress_refs ? len_in_bits(i) : len_in_bits(n - 1);
         for (unsigned j = 0; j < my_cells[i]->cnt_refs; ++j) {
             const unsigned ref = my_cells[i]->refs[j];
-            // CHECK(ref < i);
 
             const auto ref_store = (n + i - ref) % n; //rd();
             bits_ptr.store_uint(ref_store, bit_len);
@@ -290,12 +281,9 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
 
             cell_id += std::basic_string<unsigned>(bit_len, i);
         }
-    }
-    // std::cout << "refs len = " << bits_ptr.offs - old << std::endl;
+    };
 
-    const unsigned data_start = bits_ptr.offs;
-    // data
-    for (unsigned i = 0; i < n; ++i) {
+    const auto push_data = [&](const unsigned i) {
         const auto my_cell = my_cells[i];
         td::ConstBitPtr data_ptr(my_cell->data.data(), 0);
         for (unsigned j = 0; j < my_cell->cnt_bits; ++j) {
@@ -305,6 +293,27 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
             bits_ptr.offs += 1;
         }
         cell_id += std::basic_string<unsigned>(my_cell->cnt_bits, i);
+    };
+
+    // d1
+    for (unsigned i = 0; i < n; ++i) {
+        push_d1(i);
+    }
+
+    // data sizes
+    for (unsigned i = 0; i < n; ++i) {
+        push_data_size(i);
+    }
+
+    // refs
+    for (unsigned i = 0; i < n; ++i) {
+        push_refs(i);
+    }
+
+    const unsigned data_start = bits_ptr.offs;
+    // data
+    for (unsigned i = 0; i < n; ++i) {
+        push_data(i);
     }
     const unsigned data_end = bits_ptr.offs;
     // std::cout << "data len = " << data_end - data_start << std::endl;
@@ -495,28 +504,25 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
     buffer_bit.offs += 1;
 
     std::vector<Ptr<MyCell> > my_cells;
-    my_cells.reserve(n);
-
-    // build my_cells
     for (unsigned i = 0; i < n; ++i) {
         Ptr<MyCell> my_cell = std::make_shared<MyCell>();
+        my_cells.push_back(my_cell);
+    }
 
+    const auto read_d1 = [&](const unsigned i) {
+        const auto& my_cell = my_cells[i];
         const auto d1 = d1_decoder.decode_symbol(buffer_bit);
         my_cell->cnt_refs = d1 & 7;
         CHECK(my_cell->cnt_refs <= 4);
         my_cell->is_special = d1 & 8;
+    };
 
-        my_cells.push_back(my_cell);
-    }
-
-    // data sizes
-    for (auto& my_cell: my_cells) {
+    const auto read_data_size = [&](const unsigned i) {
         const auto data_size = data_size_decoder.decode_symbol(buffer_bit);
-        my_cell->cnt_bits = data_size;
-    }
+        my_cells[i]->cnt_bits = data_size;
+    };
 
-    // read refs
-    for (unsigned i = 0; i < n; ++i) {
+    const auto read_refs = [&](const unsigned i) {
         auto& my_cell = my_cells[i];
 
         const auto bit_len = compress_refs ? len_in_bits(i) : len_in_bits(n - 1);
@@ -528,9 +534,9 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
                 CHECK(ref_id < i);
             }
         }
-    }
+    };
 
-    for (unsigned i = 0; i < n; ++i) {
+    const auto read_data = [&](const unsigned i) {
         auto& my_cell = my_cells[i];
         my_cell->data.resize((my_cell->cnt_bits + 7) / 8, 0);
         td::BitPtr my_cell_bit_ptr(my_cell->data.data(), 0);
@@ -539,6 +545,25 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
             buffer_bit.offs += 1;
             my_cell_bit_ptr.offs += 1;
         }
+    };
+
+    // d1
+    for (unsigned i = 0; i < n; ++i) {
+        read_d1(i);
+    }
+
+    // data sizes
+    for (unsigned i = 0; i < n; ++i) {
+        read_data_size(i);
+    }
+
+    // read refs
+    for (unsigned i = 0; i < n; ++i) {
+        read_refs(i);
+    }
+
+    for (unsigned i = 0; i < n; ++i) {
+        read_data(i);
     }
 
     // top sort, just in case
