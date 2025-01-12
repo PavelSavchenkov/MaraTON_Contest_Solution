@@ -274,8 +274,10 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
         const auto bit_len = compress_refs ? len_in_bits(i) : len_in_bits(n - 1);
         for (unsigned j = 0; j < my_cells[i]->cnt_refs; ++j) {
             const unsigned ref = my_cells[i]->refs[j];
+            CHECK(ref != i);
+            CHECK(((n + i - ref) % n) > 0);
 
-            const auto ref_store = (n + i - ref) % n; //rd();
+            const auto ref_store = ((n + i - ref) % n) - 1; // 1 ... n-1
             bits_ptr.store_uint(ref_store, bit_len);
             bits_ptr.offs += bit_len;
 
@@ -298,18 +300,16 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
     // d1
     for (unsigned i = 0; i < n; ++i) {
         push_d1(i);
+        // push_refs(i);
+        // push_data_size(i);
+        // push_data(i);
     }
-
-    // data sizes
     for (unsigned i = 0; i < n; ++i) {
         push_data_size(i);
     }
-
-    // refs
     for (unsigned i = 0; i < n; ++i) {
         push_refs(i);
     }
-
     const unsigned data_start = bits_ptr.offs;
     // data
     for (unsigned i = 0; i < n; ++i) {
@@ -527,8 +527,9 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
 
         const auto bit_len = compress_refs ? len_in_bits(i) : len_in_bits(n - 1);
         for (unsigned j = 0; j < my_cell->cnt_refs; j++) {
-            unsigned ref_id = (n + i - buffer_bit.get_uint(bit_len)) % n;
+            const unsigned id_store = buffer_bit.get_uint(bit_len) + 1;
             buffer_bit.offs += bit_len;
+            unsigned ref_id = (n + i - id_store) % n;
             my_cell->refs[j] = ref_id;
             if (compress_refs) {
                 CHECK(ref_id < i);
@@ -547,24 +548,24 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> buffer) {
         }
     };
 
-    // d1
     for (unsigned i = 0; i < n; ++i) {
         read_d1(i);
+        // read_refs(i);
+        // read_data_size(i);
+        // read_data(i);
     }
 
-    // data sizes
     for (unsigned i = 0; i < n; ++i) {
         read_data_size(i);
     }
-
-    // read refs
     for (unsigned i = 0; i < n; ++i) {
         read_refs(i);
     }
-
     for (unsigned i = 0; i < n; ++i) {
         read_data(i);
     }
+
+    CHECK(buffer_bit.offs / 8 + 10 >= buffer.size());
 
     // top sort, just in case
     std::vector<unsigned> order; {
