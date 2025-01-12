@@ -60,14 +60,6 @@ std::basic_string<uint8_t> compress_lz_standard(const std::basic_string<uint8_t>
     return {reinterpret_cast<const uint8_t *>(res.data()), res.size()};
 }
 
-std::basic_string<uint8_t> decompress_lz_standard(const std::basic_string<uint8_t>& data) {
-    auto res = td::lz4_decompress(
-        td::BufferSlice(reinterpret_cast<const char *>(data.data()), data.size()),
-        2 << 20
-    ).move_as_ok();
-    return {reinterpret_cast<const uint8_t *>(res.data()), res.size()};
-}
-
 // 1 in the highest bit which is not used
 inline unsigned get_min_bit_str_not_in(const std::basic_string<uint8_t>& bits) {
     CHECK(!bits.empty());

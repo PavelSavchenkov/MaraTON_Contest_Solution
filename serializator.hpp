@@ -3,26 +3,11 @@
 #include <random>
 
 #include "utils.h"
-#include "compressor.hpp"
 #include "huffman.hpp"
-#include "lz_compressor_bits.hpp"
+#include "suff_aut.hpp"
 
 namespace Serializator {
-const std::string compressed_dict = "";
-
-std::basic_string<uint8_t> uncompress_dict() {
-    return {};
-
-    td::Slice slice(compressed_dict.data(), compressed_dict.size());
-    std::string dict_bytes_str = td::base64_decode(slice).move_as_ok();
-    std::basic_string<uint8_t> dict_bytes(reinterpret_cast<uint8_t *>(dict_bytes_str.data()), dict_bytes_str.size());
-    const auto final_dict = lz_compressor_bits::decompress(dict_bytes);
-    // std::cout << "final_dict.size() = " << final_dict.size() << std::endl;
-    return final_dict;
-}
-
-const std::basic_string<uint8_t> uncompressed_dict = uncompress_dict();
-
+static const unsigned MIN_MATCH_LEN = 32;
 static const uint8_t BITS_DATA_SIZE = 10;
 static const uint8_t BITS_FOR_N_CELLS = 20;
 static const uint8_t BITS_TO_DUMP_LITERAL_LEN = 9;
@@ -190,7 +175,7 @@ void build_stats(
     const unsigned n = bits.size();
     SuffAut<2> suff_aut_bits(bits);
     const auto matches = suff_aut_bits.build_matches(
-        32
+        MIN_MATCH_LEN
     );
     CHECK(n == matches.size());
 
@@ -638,29 +623,29 @@ std::vector<unsigned> build_offsets_within_cells(const std::vector<SerializeMeta
     return cell_offset;
 }
 
-std::vector<unsigned> literal_lengths_encode;
-std::vector<unsigned> match_lengths_encode;
-std::vector<unsigned> cell_id_offset_encode;
-std::vector<std::pair<unsigned, unsigned> > cur_cell_id_encode;
-std::vector<unsigned> within_cell_offset_encode;
-std::vector<int8_t> literal_bits_encode;
-std::vector<unsigned> match_start_encode;
-std::basic_string<uint8_t> serialized_bits_encode;
-std::vector<SerializeMetaData> meta_encode;
-std::vector<Ptr<MyCell> > my_cells_encode;
+// std::vector<unsigned> literal_lengths_encode;
+// std::vector<unsigned> match_lengths_encode;
+// std::vector<unsigned> cell_id_offset_encode;
+// std::vector<std::pair<unsigned, unsigned> > cur_cell_id_encode;
+// std::vector<unsigned> within_cell_offset_encode;
+// std::vector<int8_t> literal_bits_encode;
+// std::vector<unsigned> match_start_encode;
+// std::basic_string<uint8_t> serialized_bits_encode;
+// std::vector<SerializeMetaData> meta_encode;
+// std::vector<Ptr<MyCell> > my_cells_encode;
 
 std::basic_string<uint8_t> run_lz(
     const std::basic_string<uint8_t>& bits,
     const std::vector<SerializeMetaData>& meta
 ) {
     // debug
-    meta_encode = meta;
-    serialized_bits_encode = bits;
+    // meta_encode = meta;
+    // serialized_bits_encode = bits;
 
     const unsigned n = bits.size();
     SuffAut<2> suff_aut_bits(bits);
     const auto matches = suff_aut_bits.build_matches(
-        32
+        MIN_MATCH_LEN
     );
     CHECK(n == matches.size());
 
@@ -712,7 +697,7 @@ std::basic_string<uint8_t> run_lz(
             bit_ptr.offs += 1;
 
             // debug
-            literal_bits_encode.push_back(bit);
+            // literal_bits_encode.push_back(bit);
         }
     };
     unsigned last_literal_start = 0;
@@ -734,7 +719,7 @@ std::basic_string<uint8_t> run_lz(
             dump_literal(literal_len, last_literal_start);
 
             // debug
-            match_start_encode.push_back(best_s);
+            // match_start_encode.push_back(best_s);
 
             // match len
             const auto match_len_symbol = std::min(MATCH_LEN_TH, match_len);
@@ -757,7 +742,7 @@ std::basic_string<uint8_t> run_lz(
                 bit_ptr.offs += blen;
             }
             // debug
-            cur_cell_id_encode.emplace_back(cur_cell_id, bit_ptr.offs);
+            // cur_cell_id_encode.emplace_back(cur_cell_id, bit_ptr.offs);
 
             // offset within cell
             const auto offset_within_cell = within_cell_offset[best_s];
@@ -768,12 +753,12 @@ std::basic_string<uint8_t> run_lz(
             }
 
             // debug
-            {
-                literal_lengths_encode.push_back(literal_len);
-                match_lengths_encode.push_back(match_len);
-                cell_id_offset_encode.push_back(cell_id_offset);
-                within_cell_offset_encode.push_back(offset_within_cell);
-            }
+            // {
+            //     literal_lengths_encode.push_back(literal_len);
+            //     match_lengths_encode.push_back(match_len);
+            //     cell_id_offset_encode.push_back(cell_id_offset);
+            //     within_cell_offset_encode.push_back(offset_within_cell);
+            // }
 
             // update state
             i += match_len;
@@ -801,7 +786,7 @@ std::basic_string<uint8_t> serialize(td::Ref<vm::Cell> root) {
     std::vector<SerializeMetaData> meta;
     const auto output = my_cells_to_bit_str(my_cells, meta);
     // debug
-    my_cells_encode = my_cells;
+    // my_cells_encode = my_cells;
 
     const auto output_expanded = bytes_str_to_bit_str(output, true);
     CHECK(output_expanded.size() == meta.size());
@@ -957,7 +942,7 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> lz_bytes) {
 
     const unsigned n_cells = lz_bits.get_uint(BITS_FOR_N_CELLS);
     lz_bits.offs += BITS_FOR_N_CELLS;
-    std::cout << "decode: n_cells=" << n_cells << std::endl;
+    // std::cout << "decode: n_cells=" << n_cells << std::endl;
     // exit(0);
 
     std::vector<Ptr<MyCell> > my_cells(n_cells);
@@ -968,12 +953,12 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> lz_bytes) {
     std::vector<std::vector<unsigned> > cell_offset_map(n_cells);
     const auto push_meta = [&](const SerializeMetaData& m) {
         // debug
-        if (!(m == meta_encode.at(meta.size()))) {
-            std::cout << "meta.size()=" << meta.size() << std::endl;
-            std::cout << "correct meta=" << meta_encode.at(meta.size()) << std::endl;
-            std::cout << "my meta=" << m << std::endl;
-            exit(0);
-        }
+        // if (!(m == meta_encode.at(meta.size()))) {
+        //     std::cout << "meta.size()=" << meta.size() << std::endl;
+        //     std::cout << "correct meta=" << meta_encode.at(meta.size()) << std::endl;
+        //     std::cout << "my meta=" << m << std::endl;
+        //     exit(0);
+        // }
 
         CHECK(m.cell_id != -1u);
         cell_offset_map[m.cell_id].push_back(meta.size());
@@ -982,7 +967,7 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> lz_bytes) {
 
     const auto store_out_uint = [&](const uint64_t x, const uint8_t blen) {
         CHECK(blen == 1);
-        CHECK(serialized_bits_encode[out_bits_write_ptr] == x);
+        // CHECK(serialized_bits_encode[out_bits_write_ptr] == x);
 
         const auto initial_offs = out_bits.offs;
         out_bits.offs = out_bits_write_ptr;
@@ -1161,18 +1146,17 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> lz_bytes) {
         if (literal_len == LITERAL_LEN_TH) {
             literal_len += read_dumped_num(lz_bits, BITS_TO_DUMP_LITERAL_LEN);
         }
-        std::cout << "decode: literal_len=" << literal_len << std::endl;
-        CHECK(literal_len == literal_lengths_encode[debug_ptr]);
+        // std::cout << "decode: literal_len=" << literal_len << std::endl;
+        // CHECK(literal_len == literal_lengths_encode[debug_ptr]);
 
         // read literal
         for (unsigned j = 0; j < literal_len; ++j) {
             const bool bit = lz_bits.get_uint(1);
-            CHECK(bit == literal_bits_encode[literal_debug_ptr]);
+            // CHECK(bit == literal_bits_encode[literal_debug_ptr]);
             literal_debug_ptr++;
             lz_bits.offs += 1;
             store_out_uint(bit, 1);
         }
-        std::cout << "go to advance_cells_read" << std::endl;
         advance_cells_read();
         if (lz_bits.offs >= lz_cnt_bits) {
             CHECK(lz_bits.offs == lz_cnt_bits);
@@ -1184,8 +1168,8 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> lz_bytes) {
         if (match_len == MATCH_LEN_TH) {
             match_len += read_dumped_num(lz_bits, BITS_TO_DUMP_MATCH_LEN);
         }
-        std::cout << "decode: match_len=" << match_len << std::endl;
-        CHECK(match_len == match_lengths_encode[debug_ptr]);
+        // std::cout << "decode: match_len=" << match_len << std::endl;
+        // CHECK(match_len == match_lengths_encode[debug_ptr]);
         if (match_len == 0) {
             return;
         }
@@ -1200,12 +1184,12 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> lz_bytes) {
         const auto cur_cell_id = meta.at(out_bits_write_ptr).cell_id;
         const auto ref_cell_id = (n_cells + cur_cell_id - cell_id_offset) % n_cells;
         // std::cout << "decode: cell_id_offset=" << cell_id_offset << std::endl;
-        CHECK(cell_id_offset == cell_id_offset_encode[debug_ptr]);
+        // CHECK(cell_id_offset == cell_id_offset_encode[debug_ptr]);
         // std::cout << "decode: cur_cell_id=" << cur_cell_id << ", correct="
         //         << cur_cell_id_encode[debug_ptr].first
         //         << ", correct bit ptr=" << cur_cell_id_encode[debug_ptr].second << std::endl;
         // std::cout << "lz bits ptr = " << lz_bits.offs << std::endl;
-        CHECK(cur_cell_id == cur_cell_id_encode[debug_ptr].first);
+        // CHECK(cur_cell_id == cur_cell_id_encode[debug_ptr].first);
 
         // read offset within ref_cell_id
         unsigned offset_within_ref_cell = offset_within_cell_decoder.decode_symbol(lz_bits);
@@ -1213,14 +1197,14 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> lz_bytes) {
             offset_within_ref_cell += read_dumped_num(lz_bits, BITS_FOR_WITHIN_CELL_OFFSET_CURPLUS);
         }
 
-        std::cout << "decode: ref_cell_id=" << ref_cell_id << ", offset_within_ref_cell="
-                << offset_within_ref_cell << std::endl;
-        CHECK(offset_within_ref_cell == within_cell_offset_encode[debug_ptr]);
+        // std::cout << "decode: ref_cell_id=" << ref_cell_id << ", offset_within_ref_cell="
+        //         << offset_within_ref_cell << std::endl;
+        // CHECK(offset_within_ref_cell == within_cell_offset_encode[debug_ptr]);
 
         // std::cout << "decode: cell_offset_map[ref_cell_id].size()=" << cell_offset_map[ref_cell_id].size() << std::endl;
         const auto start = cell_offset_map.at(ref_cell_id).at(offset_within_ref_cell);
         // debug
-        CHECK(start == match_start_encode[debug_ptr]);
+        // CHECK(start == match_start_encode[debug_ptr]);
 
         td::ConstBitPtr read_bit(out_bytes.data(), start);
         for (unsigned j = 0; j < match_len; ++j) {
@@ -1235,7 +1219,6 @@ td::Ref<vm::Cell> deserialise(std::basic_string<uint8_t> lz_bytes) {
 
     while (lz_bits.offs < lz_cnt_bits) {
         advance_lz_decoder();
-        std::cout << "lz_bits.offs=" << lz_bits.offs << std::endl;
         ++debug_ptr;
     }
 
@@ -1261,7 +1244,7 @@ std::string compress(
     if (return_before_huffman) {
         return to_string(S);
     }
-    // S = huffman::encode_8(S);
+    S = huffman::encode_8(S);
     auto base64 = td::base64_encode(td::Slice(S.data(), S.size()));
     return base64;
 }
@@ -1270,7 +1253,7 @@ std::string decompress(const std::string& base64_data) {
     CHECK(!base64_data.empty());
     std::string data = td::base64_decode(base64_data).move_as_ok();
     std::basic_string<uint8_t> S(data.begin(), data.end());
-    // S = huffman::decode_8(S);
+    S = huffman::decode_8(S);
 
     // S = lz_compressor_bits::decompress(S, uncompressed_dict);
 

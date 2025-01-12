@@ -44,23 +44,23 @@ int main() {
 
     const auto dict_bits = dict.build_dict(
         (1 << 19),
-        lz_compressor_bits::MIN_MATCH_LENGTH
+        Serializator::MIN_MATCH_LEN
     );
     std::cout << "dict length in bits: " << dict_bits.size() << std::endl;
 
     // const auto dict_packed = pack_expanded_bits_to_bytes<std::basic_string<uint8_t> >();
 
-    std::basic_string<uint8_t> dict_lz = lz_compressor_bits::compress(dict_bits, {});
-    std::cout << "dict length (bytes) after lz compression: " << dict_lz.size() << std::endl;
-
-    std::string dict_base64 = td::base64_encode(
-        td::BufferSlice(reinterpret_cast<const char *>(dict_lz.data()), dict_lz.size())
-    );
-    std::cout << "dict length after base 64: " << dict_base64.size() << std::endl;
-
-    // output compressed dict
-    {
-        std::ofstream outfile("dicts/dict_base64.txt");
-        outfile << dict_base64;
-    }
+    // std::basic_string<uint8_t> dict_lz = lz_compressor_bits::compress(dict_bits, {});
+    // std::cout << "dict length (bytes) after lz compression: " << dict_lz.size() << std::endl;
+    //
+    // std::string dict_base64 = td::base64_encode(
+    //     td::BufferSlice(reinterpret_cast<const char *>(dict_lz.data()), dict_lz.size())
+    // );
+    // std::cout << "dict length after base 64: " << dict_base64.size() << std::endl;
+    //
+    // // output compressed dict
+    // {
+    //     std::ofstream outfile("dicts/dict_base64.txt");
+    //     outfile << dict_base64;
+    // }
 }

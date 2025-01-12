@@ -28,6 +28,8 @@ def dfs(filename):
             if to_filename not in was:
                 ans += dfs(to_filename)
         else:
+            if line.strip().startswith("CHECK"):
+                continue
             compressed_line = ""
             in_str = False
             for i in range(len(line)):

@@ -132,3 +132,34 @@ std::string to_string(const std::basic_string<uint8_t>& bytes) {
     }
     return res.str();
 }
+
+std::basic_string<uint8_t> decompress_lz_standard(const std::basic_string<uint8_t>& data) {
+    auto res = td::lz4_decompress(
+        td::BufferSlice(reinterpret_cast<const char *>(data.data()), data.size()),
+        2 << 20
+    ).move_as_ok();
+    return {reinterpret_cast<const uint8_t *>(res.data()), res.size()};
+}
+
+std::vector<unsigned> decode_vector(const std::string& base64) {
+    std::string data = td::base64_decode(base64).move_as_ok();
+    std::basic_string<uint8_t> S(data.begin(), data.end());
+
+    S = decompress_lz_standard(S);
+    td::ConstBitPtr bit_ptr(S.data(), 0);
+
+    const unsigned n = bit_ptr.get_uint(4 * 8);
+    bit_ptr.offs += 4 * 8;
+
+    const auto bits = bit_ptr.get_uint(5);
+    bit_ptr.offs += 5;
+
+    std::vector<unsigned> res;
+    for (unsigned i = 0; i < n; ++i) {
+        auto num = bit_ptr.get_uint(bits);
+        bit_ptr.offs += bits;
+        res.push_back(num);
+    }
+
+    return res;
+}

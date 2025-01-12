@@ -6,8 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 function(setup_target target_name source_file)
     add_executable(
             ${target_name} ${source_file}
-            utils.h compressor.hpp huffman.hpp serializator.hpp
-            dictionary.hpp rANS.hpp lz_compressor_bits.hpp
+            utils.h huffman.hpp serializator.hpp
+            dictionary.hpp rANS.hpp
             suff_aut.hpp utils_local.hpp
     )
     target_include_directories(${target_name} PRIVATE
@@ -24,6 +24,7 @@ endfunction()
 setup_target(main main.cpp)
 setup_target(analyse analyse.cpp)
 setup_target(analyse2 analyse2.cpp)
+setup_target(encode_array encode_array.cpp)
 setup_target(Cells "code-examples/01 - Cells.cpp")
 setup_target(TLB "code-examples/03 - TLB.cpp")
 setup_target(TLB2 "code-examples/04 - TLB 2.cpp")
