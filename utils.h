@@ -150,7 +150,7 @@ std::vector<uint> decode_vector(const std::string& base64) {
     S = decompress_lz_standard(S);
     td::ConstBitPtr bit_ptr(S.data(), 0);
 
-    const uint n = bit_ptr.get_uint(4 * 8);
+    const unsigned n = bit_ptr.get_uint(4 * 8);
     bit_ptr.offs += 4 * 8;
 
     const auto bits = bit_ptr.get_uint(5);

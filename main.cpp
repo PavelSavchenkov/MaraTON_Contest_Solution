@@ -13,8 +13,15 @@
 #include "huffman.hpp"
 #include "serializator.hpp"
 
+void prepare() {
+    for (unsigned i = 0; i < Serializator::MIN_MATCH_LEN; ++i) {
+        huffman::match_len_freq[i] = 0;
+    }
+}
 
 int main() {
+    prepare();
+
     std::string mode;
     std::cin >> mode;
     CHECK(mode == "compress" || mode == "decompress");
@@ -23,20 +30,20 @@ int main() {
     std::cin >> base64_data;
     CHECK(!base64_data.empty());
 
-    // {
-    //     auto compressed = Serializator::compress(base64_data);
-    //     auto decompressed = Serializator::decompress(compressed);
-    //
-    //     // auto compressed = LZ_inf_compressor::compress(std::basic_string<uint8_t>(base64_data.begin(), base64_data.end()));
-    //     // auto decompressed_ = LZ_inf_compressor::decompress(compressed);
-    //     // std::string decompressed(decompressed_.begin(), decompressed_.end());
-    //
-    //     std::cout << "initial base 64: " << base64_data.size() << std::endl;
-    //     std::cout << "compressed base 64: " << compressed.size() << std::endl;
-    //     std::cout << "decompressed base 64: " << decompressed.size() << std::endl;
-    //     std::cout << "initial == final: " << (base64_data == decompressed) << std::endl;
-    //     return 0;
-    // }
+    {
+        auto compressed = Serializator::compress(base64_data);
+        auto decompressed = Serializator::decompress(compressed);
+
+        // auto compressed = LZ_inf_compressor::compress(std::basic_string<uint8_t>(base64_data.begin(), base64_data.end()));
+        // auto decompressed_ = LZ_inf_compressor::decompress(compressed);
+        // std::string decompressed(decompressed_.begin(), decompressed_.end());
+
+        std::cout << "initial base 64: " << base64_data.size() << std::endl;
+        std::cout << "compressed base 64: " << compressed.size() << std::endl;
+        std::cout << "decompressed base 64: " << decompressed.size() << std::endl;
+        std::cout << "initial == final: " << (base64_data == decompressed) << std::endl;
+        return 0;
+    }
 
     // td::BufferSlice data(td::base64_decode(base64_data).move_as_ok());
 

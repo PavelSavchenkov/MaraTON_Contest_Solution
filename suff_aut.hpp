@@ -81,16 +81,23 @@ struct SuffAut : SuffAutBase<C> {
         }
     }
 
+    std::vector<unsigned> last_suff;
+    std::vector<unsigned> vs;
+    unsigned i_ptr{};
+    unsigned min_match_len{};
+
     // "best_suff[i] = x" means [i ... n-1] and [x .. n-1] have a common prefix of length best_len[i], x < i
-    std::vector<std::vector<Match>>
-    build_matches(
+    void prepare_matches(
         const unsigned min_match_len
     ) {
         const unsigned n = s.size();
-        std::vector<std::vector<Match>> matches(n);
 
-        std::vector<unsigned> vs;
+        this->min_match_len = min_match_len;
+        last_suff.assign(nodes.size(), -1u);
+        vs.clear();
         vs.reserve(n);
+        i_ptr = 0;
+
         // vs: nodes corresponding to prefixes of the reversed string
         {
             unsigned v = root;
@@ -102,10 +109,16 @@ struct SuffAut : SuffAutBase<C> {
             CHECK(vs.size() == n);
             std::reverse(vs.begin(), vs.end());
         }
+    }
 
-        std::vector<unsigned> last_suff(nodes.size(), -1); // in orig indexing, before string reversal
-        // from the longest orig suff to shortest
-        for (unsigned i = 0; i < n; ++i) {
+    std::vector<Match> get_match(unsigned need_i) {
+        CHECK(i_ptr <= need_i);
+
+        std::vector<Match> res;
+        while (i_ptr <= need_i) {
+            const unsigned i = i_ptr;
+            res.clear();
+            CHECK(i < vs.size());
             // suff [i .. n-1] in orig indexing
             unsigned u = vs[i];
             while (u && nodes[u].len >= min_match_len) {
@@ -113,13 +126,14 @@ struct SuffAut : SuffAutBase<C> {
                     Match match{};
                     match.start = last_suff[u];
                     match.len = nodes[u].len;
-                    matches[i].push_back(match);
+                    res.push_back(match);
                 }
                 last_suff[u] = i;
                 u = nodes[u].link;
             }
+            ++i_ptr;
         }
-        return matches;
+        return res;
     }
 
 private:
