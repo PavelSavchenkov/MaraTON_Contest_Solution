@@ -1,0 +1,240 @@
+check: meta seq, cell_offset_map, matches
+
+compressed base 64: 203452
+
+huffman:
+- literal lengths: done freq
+- cell id offset: done freq
+- offset within cell: done freq
+- match len: done freq
+
+new order (!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!) and update "cell_id_offset_freq" (and probably others)
+1. build DAG (i --> j iff cell i referenced cell j and only it, data)
+2. find longest chain and add to the new order
+3. select head for the next chain based on similarity to few previously added cells (using hashtable 32bit->last occur)
+4. repeat 2 until all cells from DAG are covered
+5. add edges (cell i references cell j somehow, data) and repeat 2..4
+7. add all other reference edges and repeat 2..4
+8. push the rest of the cells sorted by data size decrease OR similar to 2.
+
+dp:
+dp[i] - shortest encoding for symbols [0, i)
+i --> j: j >= "next_match >= 32"[i]; relax(dp[i] + encode_literal(j - i) + encode_match(j, ...), dp[nxt[j]])
+for each i store all possible matches >= 32 (there are few of them)
+
+* huffman for all literal lengths (look at histogram over all sample tests and hardcode) - RESEARCH DONE
+* huffman for all match offsets
+* OR match = offset to previous cell (~3 bits?) + offset inside this cell (95% huffman) -- RESEARCH DONE
+* huffman for match length (look at histogram over all sample tests and hardcode) -- RESEARCH DONE
+
++ stable_sort purely for storing DAG refs - SELECTED
+
+* reorder cells so offsets betweem matches are minimised
+* run dp
+* encode via offset in num cells + offset within a cell (huffman for that)
+* huffman for cells with data size != 282
+
+
+serialise: |all d1's| (12876=0.75%) |all data sizes| (36566=2.1%) |all refs| (121992=7.1%) |all data| (1541338=90%)
+1712772 overall
+
+compress: |literal_len| |literal[]| |match_len| |match_offset| ...
+--------------
+
+5471 matches
+sum_matches_len = 701645, this is 40.251% out of all bits
+^??????????????
+
+* huffman for cell offsets??
+* huffman for data sizes!!!!
+
+001 with dict:
+serialize: bits_spent_on_tokens=356301
+sum_matches_len=803066
+sum_matches_len in bytes: 100383
+cnt diff suff referenced: 8545
+cnt_references: 8713
+bits_spent_on_literal_tokens: 85455
+bits_spent_on_match_len_tokens: 79160
+bits_spent_on_match_offset_tokens: 191686
+avg literal len: 107.896
+match_len_p90: 257
+overall 3840328 bits
+
+001:
+serialize:
+bits_spent_on_tokens=333809
+sum_matches_len=803041
+sum_matches_len in bytes: 100380
+cnt diff suff referenced: 8485
+cnt_references: 8712
+bits_spent_on_literal_tokens: 85446
+bits_spent_on_match_len_tokens: 79152
+bits_spent_on_match_offset_tokens: 169211
+overall 1743176 bits
+
+
+serialize in bytes:  sum_match_len(bytes)=54904, bits_spent_on_tokens=147568, cnt diff suff referenced: 4853, cnt_references: 5215, overall 2267448 bits
+
+
+002:
+serialize: bits_spent_on_tokens=71307, sum_matches_len=174292, sum_matches_len in bytes: 21786, cnt diff suff referenced: 1861
+serialize in bytes:  sum_match_len(bytes)=10829, bits_spent_on_tokens=27687, cnt diff suff referenced: 918
+
+
+* rewrite basic cell serialisation
+	* work on bits level
+	* remove redundant magic codes from DLB (or build huffman coding)
+	* special type as 2 bits
+	* huffman for cell data lengths (??)
+	** huffman for nrefs + special: DONE (avg_bits = 1.58205 instead of 3)
+	** try huffman for data sizes
+* LZ on bits
+	* look at stats
+		* how many different suffexes are referenced
+		* how many positions from dictionary are referenced
+		* how many matches that are interleaved with each other
+	* optimize via suff automaton -> suff tree
+	* dynamically adjust bits_per_literal, bits_per_match_len and maybe min_match_length
+	* add dict
+* dictionary on bits
+	* optimisations
+		* remove lambdas
+		* rewrite node struct
+		* or wait several minutes
+	* serialise as bits string
+* refactor run_tests.py DONE
+	* add comparison with a baseline
+
+
+* huffman for DLB structures (???)
+* try arithmetic coding (up to 10% over huffman in extreme cases??)
+* separate probability models for tokens and actual data
+
+See: https://github.com/ton-blockchain/wallet-android/blob/4617de9b6a1e640f3d5a5a3260b0ddbc8add5900/app/jni/ton/crypto/vm/cells/DataCell.cpp#L63
+
+
+with smart cell reordering:
+====================== Running 25 tests ======================
+Idx  Name         Size   Compression   Decompression
+   1 1-001.txt  267021   OK  192371    OK  1162.497
+   2 1-002.txt   69945   OK   50691    OK  1159.604
+   3 1-003.txt   66987   OK   46014    OK  1185.600
+   4 1-004.txt   49759   OK   36415    OK  1154.849
+   5 1-005.txt  299911   OK  200974    OK  1197.524
+   6 1-006.txt   13594   OK    9418    OK  1181.471
+   7 1-007.txt  108984   OK   79977    OK  1153.508
+   8 1-008.txt  144364   OK  106300    OK  1151.853
+   9 1-009.txt   13416   OK    9263    OK  1183.121
+  10 1-010.txt   82562   OK   60989    OK  1150.281
+  11 1-011.txt  118672   OK   86306    OK  1157.900
+  12 1-012.txt   36308   OK   26544    OK  1155.349
+  13 1-013.txt   51577   OK   36817    OK  1166.980
+  14 1-014.txt  132947   OK   96449    OK  1159.105
+  15 1-015.txt  127024   OK   90691    OK  1166.883
+  16 1-016.txt   47330   OK   34269    OK  1160.063
+  17 1-017.txt   13782   OK    9617    OK  1177.999
+  18 1-018.txt   82788   OK   60433    OK  1156.087
+  19 1-019.txt   73878   OK   54393    OK  1151.905
+  20 1-020.txt   67346   OK   48960    OK  1158.083
+  21 1-021.txt  137249   OK  101591    OK  1149.297
+  22 1-022.txt   14183   OK    9796    OK  1182.952
+  23 1-023.txt  135340   OK   96465    OK  1167.706
+  24 1-024.txt  118229   OK   87357    OK  1150.166
+  25 1-025.txt   24747   OK   18828    OK  1135.835
+Passed tests:   25/25
+Average points: 1163.065
+Total points:   29076.618
+
+with dynamic "bytes for index"
+====================== Running 25 tests ======================
+Idx  Name         Size   Compression   Decompression
+   1 1-001.txt  267021   OK  205318    OK  1130.633
+   2 1-002.txt   69945   OK   51802    OK  1149.022
+   3 1-003.txt   66987   OK   47240    OK  1172.875
+   4 1-004.txt   49759   OK   36794    OK  1149.793
+   5 1-005.txt  299911   OK  215590    OK  1163.571
+   6 1-006.txt   13594   OK    9460    OK  1179.318
+   7 1-007.txt  108984   OK   83607    OK  1131.766
+   8 1-008.txt  144364   OK  111308    OK  1129.291
+   9 1-009.txt   13416   OK    9323    OK  1179.999
+  10 1-010.txt   82562   OK   62805    OK  1135.911
+  11 1-011.txt  118672   OK   90614    OK  1134.065
+  12 1-012.txt   36308   OK   26707    OK  1152.361
+  13 1-013.txt   51577   OK   37436    OK  1158.864
+  14 1-014.txt  132947   OK  101066    OK  1136.236
+  15 1-015.txt  127024   OK   95400    OK  1142.179
+  16 1-016.txt   47330   OK   34683    OK  1154.207
+  17 1-017.txt   13782   OK    9610    OK  1178.352
+  18 1-018.txt   82788   OK   62750    OK  1137.682
+  19 1-019.txt   73878   OK   55400    OK  1142.932
+  20 1-020.txt   67346   OK   50040    OK  1147.428
+  21 1-021.txt  137249   OK  106502    OK  1126.141
+  22 1-022.txt   14183   OK    9858    OK  1179.901
+  23 1-023.txt  135340   OK  101234    OK  1144.166
+  24 1-024.txt  118229   OK   90758    OK  1131.448
+  25 1-025.txt   24747   OK   18885    OK  1134.351
+Passed tests:   25/25
+Average points: 1148.900
+Total points:   28722.493
+
+
+----------------------
+their deserialisation:
+-- td::Result<Ref<Cell>> std_boc_deserialize(td::Slice data, bool can_be_empty)
+in boc.cpp
+-- BagOfCells::deserialize(const td::Slice& data, int max_roots)
+in boc.cpp
+-- td::Result<td::Ref<vm::DataCell>> BagOfCells::deserialize_cell(int idx, td::Slice cells_slice,
+                                                               td::Span<td::Ref<DataCell>> cells_span,
+                                                               std::vector<td::uint8>* cell_should_cache)
+in boc.cpp
+-- td::Status CellSerializationInfo::init(td::uint8 d1, td::uint8 d2, int ref_byte_size)
+in boc.cpp
+-- td::Result<Ref<DataCell>> CellSerializationInfo::create_data_cell(td::Slice cell_slice,
+                                                                  td::Span<Ref<Cell>> refs) const
+in boc.cpp
+
+
+
+my serialised --> 306540
+their serialise with mode=0 --> 306560
+
+their number of bytes (mode=0) --> 229919
+my number of bytes -->             229903
+
+PLAN:
+analyse the entire BoC structure to the last details
+analyse existing serialisation algorithm
+^ both are based on documentation
+try different compression techniques
+calculate statistics of different types of cells, etc based on sample data
+
+-------------------
+CELLS
+
+Cell:
+	up to 1023 bits of data
+	up to 4 refs to other cells
+
+BoC = block:
+	root + all reachable cells
+
+Cell Serialization (= standard layout = standard representation)
+	- leave only unique cells and do top sort. now each cell has an index. serialise them in order
+	- bytestring for each cell:
+		* 2 byte descriptor (denoted as d1 and d2)
+			1. refs descriptor = r + 8s + 32l
+				0 <= r <= 4 (takes 3 bits) = the number of references
+				0 <= s <= 1 (takes 2 bit) = exotic or not
+				0 <= l <= 3 (takes 3 bits) = cell level
+			2. bits descriptor = floor(b / 8) + ceil(b / 8) = 2 * floor(b / 8) + [b % 8 != 0]; <= 255;
+				b = the number of data bits
+				descriptor = "number of full bytes" plus "completion tag" (takes all 8 bits)
+		* ceil(b / 8) bytes of data. if completion tag is on then data is appended by 1 in the last byte
+		* r indexes of referenced cells
+			- each reference takes 1 byte (cell index)
+			- OR each reference takes 32 bytes (cell sha256 hash)
+		OVERALL each cell serialisation takes (2 + ceil(b / 8) + r) bytes
+	- THEN concatenate binarystrings of each cell (in the top sort order)
+
